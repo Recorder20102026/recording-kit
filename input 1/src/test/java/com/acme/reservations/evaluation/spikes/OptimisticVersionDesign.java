@@ -1,14 +1,10 @@
 package com.acme.reservations.evaluation.spikes;
 
-import com.acme.reservations.db.Database;
-import com.acme.reservations.db.DuplicateKeyException;
-import com.acme.reservations.db.TableDef;
+import com.acme.reservations.db.*;
 import com.acme.reservations.domain.Reservation;
 import com.acme.reservations.service.ServiceMetrics;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**

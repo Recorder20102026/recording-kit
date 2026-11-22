@@ -3,9 +3,7 @@ package com.acme.reservations.persistence;
 import com.acme.reservations.domain.TimeInterval;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Row of the {@code slot_bucket} table (ADR-007): one row per resource per fixed-size time bucket.

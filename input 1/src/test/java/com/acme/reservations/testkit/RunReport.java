@@ -1,9 +1,7 @@
 package com.acme.reservations.testkit;
 
-import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.cluster.ServiceNode;
-import com.acme.reservations.db.Database;
-import com.acme.reservations.db.DbMetrics;
+import com.acme.reservations.cluster.*;
+import com.acme.reservations.db.*;
 import com.acme.reservations.service.ServiceMetrics;
 
 import java.util.List;

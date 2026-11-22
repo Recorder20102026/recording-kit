@@ -1,26 +1,15 @@
 package com.acme.reservations.suites;
 
 import com.acme.reservations.api.HttpResponse;
-import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.cluster.ServiceNode;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.ReservationResult;
+import com.acme.reservations.cluster.*;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.testkit.Fixtures;
-import com.acme.reservations.testkit.Invariants;
-import com.acme.reservations.testkit.LoadRunner;
-import com.acme.reservations.testkit.Scenario;
-import com.acme.reservations.testkit.TestRunner;
-import com.acme.reservations.testkit.Verdict;
+import com.acme.reservations.testkit.*;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.acme.reservations.testkit.Fixtures.request;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /** Correctness must hold for the cluster, not for one JVM. */
 public class MultiNodeConsistencyTest {

@@ -1,6 +1,6 @@
-diff -ruN a/config/reservation.properties b/config/reservation.properties
+diff -ruN -x build -x reports a/config/reservation.properties b/config/reservation.properties
 --- a/config/reservation.properties	2026-11-20 23:12:20
-+++ b/config/reservation.properties	2026-11-20 23:33:18
++++ b/config/reservation.properties	2026-11-20 23:26:09
 @@ -18,10 +18,15 @@
  # Horizontal pod autoscaler min replicas
  cluster.nodes=3
@@ -23,9 +23,9 @@ diff -ruN a/config/reservation.properties b/config/reservation.properties
 +retry.backoff.max.ms=20
 +# Retry-After header on 503 when the budget is spent
 +retry.client.retry-after.ms=200
-diff -ruN a/docs/adr/ADR-007-reservation-locking.md b/docs/adr/ADR-007-reservation-locking.md
+diff -ruN -x build -x reports a/docs/adr/ADR-007-reservation-locking.md b/docs/adr/ADR-007-reservation-locking.md
 --- a/docs/adr/ADR-007-reservation-locking.md	1970-01-01 05:30:00
-+++ b/docs/adr/ADR-007-reservation-locking.md	2026-11-20 23:33:18
++++ b/docs/adr/ADR-007-reservation-locking.md	2026-11-20 23:33:08
 @@ -0,0 +1,76 @@
 +# ADR-007: Slot-bucket fencing for the reservation write path
 +
@@ -103,10 +103,10 @@ diff -ruN a/docs/adr/ADR-007-reservation-locking.md b/docs/adr/ADR-007-reservati
 +* Ops: `slot_bucket` grows with the calendar. Add a nightly job deleting buckets older than 7 days,
 +  and backfill buckets from existing confirmed reservations before enabling (migration script).
 +* Bookings now become visible to downstream systems up to one relay interval (100ms) after COMMIT.
-diff -ruN a/src/main/java/com/acme/reservations/cluster/ServiceNode.java b/src/main/java/com/acme/reservations/cluster/ServiceNode.java
---- a/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-20 23:13:20
-+++ b/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-20 23:33:18
-@@ -34,9 +34,9 @@
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/cluster/ServiceNode.java b/src/main/java/com/acme/reservations/cluster/ServiceNode.java
+--- a/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-23 00:53:23
+@@ -28,9 +28,9 @@
          ReservationRepository reservations = new ReservationRepository();
          ResourceRepository resources = new ResourceRepository();
          OutboxRepository outbox = new OutboxRepository(db);
@@ -118,10 +118,10 @@ diff -ruN a/src/main/java/com/acme/reservations/cluster/ServiceNode.java b/src/m
          this.controller = new ReservationController(service);
          this.outboxRelay = new OutboxRelay(db, outbox, paymentGateway, eventBus);
      }
-diff -ruN a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/src/main/java/com/acme/reservations/config/ReservationConfig.java
---- a/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-20 23:12:20
-+++ b/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-20 23:33:18
-@@ -20,9 +20,11 @@
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/src/main/java/com/acme/reservations/config/ReservationConfig.java
+--- a/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-23 00:53:23
+@@ -18,9 +18,11 @@
                                  long paymentLatencyMaxMillis,
                                  long eventBusLatencyMillis,
                                  int clusterNodes,
@@ -135,7 +135,7 @@ diff -ruN a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/
  
      public static ReservationConfig load() {
          Path path = Path.of(System.getProperty("reservation.config", "config/reservation.properties"));
-@@ -44,9 +46,11 @@
+@@ -42,9 +44,11 @@
                  longOf(p, "payment.latency.max.ms", 6),
                  longOf(p, "eventbus.latency.ms", 1),
                  (int) longOf(p, "cluster.nodes", 3),
@@ -150,10 +150,10 @@ diff -ruN a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/
      }
  
      public DbConfig dbConfig() {
-diff -ruN a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/main/java/com/acme/reservations/persistence/Schema.java
---- a/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-20 23:11:45
-+++ b/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-20 23:33:18
-@@ -16,6 +16,8 @@
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/main/java/com/acme/reservations/persistence/Schema.java
+--- a/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-23 00:53:23
+@@ -15,6 +15,8 @@
   *                           amount_cents bigint, payment_hold_key text, created_by_node text, version bigint);
   * CREATE INDEX reservation_resource_time ON reservation (resource_id, starts_at);
   * CREATE TABLE outbox      (id text PRIMARY KEY, type text, payload jsonb, status text, created_at timestamptz);
@@ -162,7 +162,7 @@ diff -ruN a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/ma
   * </pre>
   */
  public final class Schema {
-@@ -23,6 +25,7 @@
+@@ -22,6 +24,7 @@
      public static final TableDef<Resource> RESOURCES = new TableDef<>("resource");
      public static final TableDef<Reservation> RESERVATIONS = new TableDef<>("reservation");
      public static final TableDef<OutboxMessage> OUTBOX = new TableDef<>("outbox");
@@ -170,18 +170,16 @@ diff -ruN a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/ma
  
      private Schema() {
      }
-diff -ruN a/src/main/java/com/acme/reservations/persistence/SlotBucket.java b/src/main/java/com/acme/reservations/persistence/SlotBucket.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/SlotBucket.java b/src/main/java/com/acme/reservations/persistence/SlotBucket.java
 --- a/src/main/java/com/acme/reservations/persistence/SlotBucket.java	1970-01-01 05:30:00
-+++ b/src/main/java/com/acme/reservations/persistence/SlotBucket.java	2026-11-20 23:33:18
-@@ -0,0 +1,45 @@
++++ b/src/main/java/com/acme/reservations/persistence/SlotBucket.java	2026-11-23 00:53:23
+@@ -0,0 +1,43 @@
 +package com.acme.reservations.persistence;
 +
 +import com.acme.reservations.domain.TimeInterval;
 +
 +import java.time.Instant;
-+import java.util.ArrayList;
-+import java.util.List;
-+import java.util.Optional;
++import java.util.*;
 +
 +/**
 + * Row of the {@code slot_bucket} table (ADR-007): one row per resource per fixed-size time bucket.
@@ -219,33 +217,18 @@ diff -ruN a/src/main/java/com/acme/reservations/persistence/SlotBucket.java b/sr
 +        return new SlotBucket(key, resourceId, bucketStart, version + 1, next);
 +    }
 +}
-diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java b/src/main/java/com/acme/reservations/service/ReservationService.java
---- a/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-20 23:12:48
-+++ b/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-20 23:33:18
-@@ -2,9 +2,7 @@
- 
- import com.acme.reservations.config.ReservationConfig;
- import com.acme.reservations.db.Database;
--import com.acme.reservations.db.LockWaitTimeoutException;
- import com.acme.reservations.db.Transaction;
--import com.acme.reservations.db.TransientDbException;
- import com.acme.reservations.domain.CreateReservationRequest;
- import com.acme.reservations.domain.Reservation;
- import com.acme.reservations.domain.ReservationResult;
-@@ -14,19 +12,16 @@
- import com.acme.reservations.persistence.OutboxRepository;
- import com.acme.reservations.persistence.ReservationRepository;
- import com.acme.reservations.persistence.ResourceRepository;
--import com.acme.reservations.sideeffects.EventBus;
--import com.acme.reservations.sideeffects.PaymentGateway;
--import com.acme.reservations.sideeffects.PaymentHold;
--import com.acme.reservations.sideeffects.ReservationEvent;
-+import com.acme.reservations.persistence.SlotBucket;
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/ReservationService.java b/src/main/java/com/acme/reservations/service/ReservationService.java
+--- a/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-23 00:53:23
+@@ -5,15 +5,14 @@
+ import com.acme.reservations.domain.*;
+ import com.acme.reservations.outbox.OutboxMessage;
+ import com.acme.reservations.persistence.*;
+-import com.acme.reservations.sideeffects.*;
  
 +import java.nio.charset.StandardCharsets;
  import java.time.Duration;
- import java.util.Optional;
- import java.util.UUID;
+ import java.util.*;
 -import java.util.concurrent.ConcurrentHashMap;
 -import java.util.concurrent.locks.ReentrantLock;
  
@@ -256,7 +239,7 @@ diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java 
   */
  public final class ReservationService {
  
-@@ -38,24 +33,16 @@
+@@ -25,24 +24,16 @@
      private final ResourceRepository resources;
      private final OutboxRepository outbox;
      private final SlotAvailabilityChecker availability;
@@ -282,7 +265,7 @@ diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java 
                                RetryPolicy retryPolicy,
                                ReservationConfig config,
                                ServiceMetrics metrics) {
-@@ -65,10 +52,8 @@
+@@ -52,10 +43,8 @@
          this.resources = resources;
          this.outbox = outbox;
          this.availability = availability;
@@ -294,7 +277,7 @@ diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java 
          this.metrics = metrics;
      }
  
-@@ -79,79 +64,92 @@
+@@ -66,79 +55,92 @@
          if (invalid.isPresent()) {
              return invalid.get();
          }
@@ -436,7 +419,7 @@ diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java 
      public CancelOutcome cancelReservation(String reservationId) {
          return db.inTransaction("reservation.cancel", tx -> {
              Optional<Reservation> found = reservations.findByIdForUpdate(tx, reservationId);
-@@ -165,6 +163,7 @@
+@@ -152,6 +154,7 @@
              if (!reservations.markCancelled(tx, reservation)) {
                  return CancelOutcome.CONCURRENT_MODIFICATION;
              }
@@ -444,21 +427,19 @@ diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java 
              outbox.enqueue(tx, OutboxMessage.Type.RELEASE_PAYMENT_HOLD, reservation.id(), reservation.resourceId(),
                      reservation.customerId(), reservation.amountCents(), reservation.paymentHoldKey());
              outbox.enqueue(tx, OutboxMessage.Type.RESERVATION_CANCELLED_EVENT, reservation.id(),
-diff -ruN a/src/main/java/com/acme/reservations/service/RetryPolicy.java b/src/main/java/com/acme/reservations/service/RetryPolicy.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/RetryPolicy.java b/src/main/java/com/acme/reservations/service/RetryPolicy.java
 --- a/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-20 23:12:20
-+++ b/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-20 23:33:18
-@@ -1,32 +1,73 @@
++++ b/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-23 00:53:23
+@@ -1,32 +1,71 @@
  package com.acme.reservations.service;
  
  import com.acme.reservations.config.ReservationConfig;
-+import com.acme.reservations.db.LockWaitTimeoutException;
-+import com.acme.reservations.db.TransientDbException;
++import com.acme.reservations.db.*;
  import com.acme.reservations.support.Latency;
  
  import java.time.Duration;
 +import java.util.concurrent.ThreadLocalRandom;
-+import java.util.function.BiFunction;
-+import java.util.function.IntFunction;
++import java.util.function.*;
  
 -/** Retry settings for the reservation write path. */
 +/**
@@ -532,18 +513,18 @@ diff -ruN a/src/main/java/com/acme/reservations/service/RetryPolicy.java b/src/m
      }
  
      public int maxRetries() {
-diff -ruN a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java
---- a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-20 23:12:20
-+++ b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-20 23:33:18
-@@ -5,7 +5,6 @@
- import com.acme.reservations.domain.TimeInterval;
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java
+--- a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-23 00:53:23
+@@ -4,7 +4,6 @@
+ import com.acme.reservations.domain.*;
  import com.acme.reservations.persistence.ReservationRepository;
  
 -import java.time.Instant;
  import java.util.Optional;
  
  /** Answers "is this resource free for this interval?" against the reservation table. */
-@@ -19,15 +18,13 @@
+@@ -18,15 +17,13 @@
  
      /**
       * Returns an existing confirmed reservation that clashes with {@code requested}, if any.
@@ -563,26 +544,18 @@ diff -ruN a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.
                  return Optional.of(existing);
              }
          }
-diff -ruN a/src/main/java/com/acme/reservations/service/SlotBucketFence.java b/src/main/java/com/acme/reservations/service/SlotBucketFence.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/SlotBucketFence.java b/src/main/java/com/acme/reservations/service/SlotBucketFence.java
 --- a/src/main/java/com/acme/reservations/service/SlotBucketFence.java	1970-01-01 05:30:00
-+++ b/src/main/java/com/acme/reservations/service/SlotBucketFence.java	2026-11-20 23:33:18
-@@ -0,0 +1,120 @@
++++ b/src/main/java/com/acme/reservations/service/SlotBucketFence.java	2026-11-23 00:53:23
+@@ -0,0 +1,112 @@
 +package com.acme.reservations.service;
 +
-+import com.acme.reservations.db.Transaction;
-+import com.acme.reservations.db.TransientDbException;
-+import com.acme.reservations.domain.Reservation;
-+import com.acme.reservations.domain.TimeInterval;
-+import com.acme.reservations.persistence.Schema;
-+import com.acme.reservations.persistence.SlotBucket;
++import com.acme.reservations.db.*;
++import com.acme.reservations.domain.*;
++import com.acme.reservations.persistence.*;
 +
-+import java.time.Duration;
-+import java.time.Instant;
-+import java.util.ArrayList;
-+import java.util.LinkedHashMap;
-+import java.util.List;
-+import java.util.Map;
-+import java.util.Optional;
++import java.time.*;
++import java.util.*;
 +
 +/**
 + * Scoped key fencing for the reservation write path (ADR-007).

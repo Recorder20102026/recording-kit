@@ -2,16 +2,11 @@ package com.acme.reservations.testkit;
 
 import com.acme.reservations.cluster.Cluster;
 import com.acme.reservations.db.Database;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.ReservationResult;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.sideeffects.PaymentHold;
-import com.acme.reservations.sideeffects.ReservationEvent;
+import com.acme.reservations.sideeffects.*;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 

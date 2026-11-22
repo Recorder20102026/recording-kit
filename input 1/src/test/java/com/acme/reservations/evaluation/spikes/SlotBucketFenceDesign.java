@@ -1,20 +1,11 @@
 package com.acme.reservations.evaluation.spikes;
 
-import com.acme.reservations.db.Database;
-import com.acme.reservations.db.TableDef;
-import com.acme.reservations.db.TransientDbException;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.ReservationResult;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.db.*;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.service.ServiceMetrics;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.time.*;
+import java.util.*;
 
 /**
  * Design C2 - scoped key fencing on fixed-size time buckets:

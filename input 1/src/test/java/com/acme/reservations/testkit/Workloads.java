@@ -1,15 +1,10 @@
 package com.acme.reservations.testkit;
 
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.domain.*;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
-import static com.acme.reservations.testkit.Fixtures.HOT_COURT;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /** Production-shaped request mixes. */
 public final class Workloads {

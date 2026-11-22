@@ -1,14 +1,12 @@
 package com.acme.reservations.service;
 
 import com.acme.reservations.config.ReservationConfig;
-import com.acme.reservations.db.LockWaitTimeoutException;
-import com.acme.reservations.db.TransientDbException;
+import com.acme.reservations.db.*;
 import com.acme.reservations.support.Latency;
 
 import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.BiFunction;
-import java.util.function.IntFunction;
+import java.util.function.*;
 
 /**
  * Bounded retry for the reservation write path.

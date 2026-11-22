@@ -3,17 +3,11 @@ package com.acme.reservations.suites;
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.cluster.Cluster;
 import com.acme.reservations.domain.TimeInterval;
-import com.acme.reservations.testkit.Fixtures;
-import com.acme.reservations.testkit.Invariants;
-import com.acme.reservations.testkit.LoadRunner;
-import com.acme.reservations.testkit.Scenario;
-import com.acme.reservations.testkit.TestRunner;
-import com.acme.reservations.testkit.Verdict;
+import com.acme.reservations.testkit.*;
 
 import java.util.List;
 
-import static com.acme.reservations.testkit.Fixtures.request;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /**
  * Every shape of interval overlap against an existing 10:00-11:00 booking, first sequentially

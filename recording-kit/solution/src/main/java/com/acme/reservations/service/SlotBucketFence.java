@@ -1,19 +1,11 @@
 package com.acme.reservations.service;
 
-import com.acme.reservations.db.Transaction;
-import com.acme.reservations.db.TransientDbException;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.TimeInterval;
-import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.persistence.SlotBucket;
+import com.acme.reservations.db.*;
+import com.acme.reservations.domain.*;
+import com.acme.reservations.persistence.*;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.time.*;
+import java.util.*;
 
 /**
  * Scoped key fencing for the reservation write path (ADR-007).

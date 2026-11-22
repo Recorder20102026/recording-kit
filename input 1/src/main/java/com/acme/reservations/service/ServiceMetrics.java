@@ -1,7 +1,6 @@
 package com.acme.reservations.service;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.*;
 
 /** Per-node counters (would be Micrometer meters in production). */
 public final class ServiceMetrics {

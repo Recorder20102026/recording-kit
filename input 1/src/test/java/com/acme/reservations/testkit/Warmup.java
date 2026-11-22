@@ -1,11 +1,9 @@
 package com.acme.reservations.testkit;
 
-import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.cluster.ServiceNode;
+import com.acme.reservations.cluster.*;
 import com.acme.reservations.domain.CreateReservationRequest;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * JIT warm-up before timing-sensitive measurements. A cold JVM runs the first burst in the

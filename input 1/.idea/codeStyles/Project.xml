@@ -1,0 +1,9 @@
+<component name="ProjectCodeStyleConfiguration">
+  <code_scheme name="Project" version="173">
+    <JavaCodeStyleSettings>
+      <!-- 2+ classes (or static members) from the same package/class => import pkg.* -->
+      <option name="CLASS_COUNT_TO_USE_IMPORT_ON_DEMAND" value="2" />
+      <option name="NAMES_COUNT_TO_USE_IMPORT_ON_DEMAND" value="2" />
+    </JavaCodeStyleSettings>
+  </code_scheme>
+</component>

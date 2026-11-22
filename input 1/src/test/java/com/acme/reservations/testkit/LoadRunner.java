@@ -3,8 +3,7 @@ package com.acme.reservations.testkit;
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.domain.CreateReservationRequest;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Function;
 

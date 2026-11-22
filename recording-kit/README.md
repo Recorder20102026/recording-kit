@@ -9,6 +9,14 @@
 | `solution.patch` | The whole fix as one unified diff. Recovery: `patch -p1 < "../recording-kit/solution.patch"` from the project root. |
 | `expected-output/` | Real outputs from a dry run: baseline tests, race repro, design evaluation, after-fix tests, after-fix repro. |
 
+## Imports
+
+Every source file imports with `package.*` wherever it uses two or more classes from the same package
+(for example `import com.acme.reservations.persistence.*;`). The pasted solution files therefore bring
+their own imports, and the hand-typed edits (`Schema`, `ServiceNode`, `SlotAvailabilityChecker`) need no
+new imports. `input 1/.idea/codeStyles/` sets IntelliJ to the same rule (2+ classes => `.*`), so
+auto-import and Optimize Imports (⌃⌥O) keep the files in this style.
+
 ## Pre-flight checklist (before you hit record)
 
 1. IntelliJ IDEA: *Settings ▸ Editor ▸ Font* → 16+ pt; the terminal font too (*Settings ▸ Tools ▸ Terminal*).

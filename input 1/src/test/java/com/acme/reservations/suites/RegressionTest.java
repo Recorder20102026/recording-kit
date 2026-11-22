@@ -2,26 +2,14 @@ package com.acme.reservations.suites;
 
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.ReservationResult;
-import com.acme.reservations.domain.ReservationStatus;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.sideeffects.PaymentHold;
-import com.acme.reservations.sideeffects.ReservationEvent;
-import com.acme.reservations.testkit.Fixtures;
-import com.acme.reservations.testkit.Invariants;
-import com.acme.reservations.testkit.Scenario;
-import com.acme.reservations.testkit.TestRunner;
-import com.acme.reservations.testkit.Verdict;
+import com.acme.reservations.sideeffects.*;
+import com.acme.reservations.testkit.*;
 
 import java.time.Instant;
 
-import static com.acme.reservations.testkit.Fixtures.HOT_COURT;
-import static com.acme.reservations.testkit.Fixtures.OTHER_COURT;
-import static com.acme.reservations.testkit.Fixtures.request;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /** Existing behaviour that must keep working after any change to the write path. */
 public class RegressionTest {

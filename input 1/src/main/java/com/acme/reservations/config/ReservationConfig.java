@@ -2,10 +2,8 @@ package com.acme.reservations.config;
 
 import com.acme.reservations.db.DbConfig;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.*;
+import java.nio.file.*;
 import java.time.Duration;
 import java.util.Properties;
 

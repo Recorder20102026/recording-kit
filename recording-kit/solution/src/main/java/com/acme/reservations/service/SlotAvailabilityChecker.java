@@ -1,8 +1,7 @@
 package com.acme.reservations.service;
 
 import com.acme.reservations.db.Transaction;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.ReservationRepository;
 
 import java.util.Optional;

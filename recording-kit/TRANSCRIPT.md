@@ -286,7 +286,8 @@ with jitter that returns HTTP 503 instead of HTTP 500. I'll record the decision 
                 return Optional.of(existing);
             }
 ```
-Then press ⌃⌥O to remove the unused `Instant` import. Run:
+Then press ⌃⌥O (Optimize Imports) to drop the now-unused `import java.time.Instant;`. This step is optional:
+an unused import is only a grey warning. The project code style keeps the `.*` imports as they are. Run:
 ```bash
 ./scripts/test.sh overlap
 ```
@@ -307,11 +308,14 @@ In `Schema.java`, add:
 ```java
     public static final TableDef<SlotBucket> SLOT_BUCKETS = new TableDef<>("slot_bucket");
 ```
-and add the `slot_bucket` line to the DDL comment.
+and add the `slot_bucket` line to the DDL comment. No import changes: `SlotBucket` is in the same
+`persistence` package as `Schema`.
 
 **SAY**: "The new `slot_bucket` table has one row per court per 15-minute bucket. Each `SlotBucket` row
 holds a version, which is the fencing token, and the list of occupants. The `slot_bucket` table gives me
-a row to lock even when the competing reservation doesn't exist yet."
+a row to lock even when the competing reservation doesn't exist yet. `SlotBucket` lives in the
+`persistence` package, and `ReservationService` already imports `com.acme.reservations.persistence.*`,
+so no import has to change."
 
 ### 4.3 Add the fence
 **DO**: Right-click `service` → *New ▸ Java Class* → `SlotBucketFence` → paste.
@@ -383,7 +387,8 @@ Then build:
 ./scripts/build.sh
 ```
 **SAY**: "In `ServiceNode`, the `ReservationService` constructor no longer receives the payment gateway
-or the event bus, only the outbox. `scripts/build.sh` compiles the project."
+or the event bus, only the outbox. The imports in `ServiceNode` stay exactly as they are.
+`scripts/build.sh` compiles the project."
 
 **EXPECT**: `[build] OK (38 main / 24 test sources)`.
 

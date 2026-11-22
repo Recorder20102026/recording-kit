@@ -3,18 +3,12 @@ package com.acme.reservations.suites;
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.cluster.Cluster;
 import com.acme.reservations.db.DbMetrics;
-import com.acme.reservations.testkit.Constraints;
-import com.acme.reservations.testkit.Fixtures;
-import com.acme.reservations.testkit.Invariants;
-import com.acme.reservations.testkit.Scenario;
-import com.acme.reservations.testkit.TestRunner;
-import com.acme.reservations.testkit.Verdict;
+import com.acme.reservations.testkit.*;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
-import static com.acme.reservations.testkit.Fixtures.request;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /** Behaviour at the edge of the 50ms lock_timeout and the 2-retry budget. */
 public class LockTimeoutRetryTest {

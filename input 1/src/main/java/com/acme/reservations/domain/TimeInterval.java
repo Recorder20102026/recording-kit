@@ -1,7 +1,6 @@
 package com.acme.reservations.domain;
 
-import java.time.Duration;
-import java.time.Instant;
+import java.time.*;
 import java.util.Objects;
 
 /** A half-open booking interval {@code [start, end)}. */

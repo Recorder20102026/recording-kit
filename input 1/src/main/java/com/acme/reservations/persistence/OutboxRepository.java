@@ -1,11 +1,9 @@
 package com.acme.reservations.persistence;
 
-import com.acme.reservations.db.Database;
-import com.acme.reservations.db.Transaction;
+import com.acme.reservations.db.*;
 import com.acme.reservations.outbox.OutboxMessage;
 
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 
 public final class OutboxRepository {
 

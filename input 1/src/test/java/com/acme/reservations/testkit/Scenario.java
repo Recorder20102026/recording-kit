@@ -1,9 +1,6 @@
 package com.acme.reservations.testkit;
 
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+import java.lang.annotation.*;
 
 /** Marks a test scenario method. Methods run in {@link #order()} order. */
 @Retention(RetentionPolicy.RUNTIME)

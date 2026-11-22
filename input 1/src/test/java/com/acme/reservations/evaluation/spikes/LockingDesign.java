@@ -1,8 +1,7 @@
 package com.acme.reservations.evaluation.spikes;
 
 import com.acme.reservations.db.Database;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.ReservationResult;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.service.ServiceMetrics;
 
 /**

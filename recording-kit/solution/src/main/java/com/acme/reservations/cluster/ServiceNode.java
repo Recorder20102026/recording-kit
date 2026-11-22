@@ -4,15 +4,9 @@ import com.acme.reservations.api.ReservationController;
 import com.acme.reservations.config.ReservationConfig;
 import com.acme.reservations.db.Database;
 import com.acme.reservations.outbox.OutboxRelay;
-import com.acme.reservations.persistence.OutboxRepository;
-import com.acme.reservations.persistence.ReservationRepository;
-import com.acme.reservations.persistence.ResourceRepository;
-import com.acme.reservations.service.ReservationService;
-import com.acme.reservations.service.RetryPolicy;
-import com.acme.reservations.service.ServiceMetrics;
-import com.acme.reservations.service.SlotAvailabilityChecker;
-import com.acme.reservations.sideeffects.EventBus;
-import com.acme.reservations.sideeffects.PaymentGateway;
+import com.acme.reservations.persistence.*;
+import com.acme.reservations.service.*;
+import com.acme.reservations.sideeffects.*;
 
 /**
  * One pod of reservation-service. Everything constructed here (service, locks held in its fields,

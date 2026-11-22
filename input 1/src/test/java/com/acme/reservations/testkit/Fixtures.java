@@ -2,9 +2,7 @@ package com.acme.reservations.testkit;
 
 import com.acme.reservations.cluster.Cluster;
 import com.acme.reservations.config.ReservationConfig;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Resource;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.domain.*;
 
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicLong;

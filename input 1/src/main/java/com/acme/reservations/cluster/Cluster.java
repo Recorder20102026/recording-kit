@@ -3,14 +3,11 @@ package com.acme.reservations.cluster;
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.config.ReservationConfig;
 import com.acme.reservations.db.Database;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Resource;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.sideeffects.EventBus;
-import com.acme.reservations.sideeffects.PaymentGateway;
+import com.acme.reservations.sideeffects.*;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**

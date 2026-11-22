@@ -2,12 +2,9 @@ package com.acme.reservations.outbox;
 
 import com.acme.reservations.db.Database;
 import com.acme.reservations.persistence.OutboxRepository;
-import com.acme.reservations.sideeffects.EventBus;
-import com.acme.reservations.sideeffects.PaymentGateway;
-import com.acme.reservations.sideeffects.ReservationEvent;
+import com.acme.reservations.sideeffects.*;
 
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Background worker that dispatches committed outbox rows (at-least-once).

@@ -2,8 +2,7 @@ package com.acme.reservations.sideeffects;
 
 import com.acme.reservations.support.Latency;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**

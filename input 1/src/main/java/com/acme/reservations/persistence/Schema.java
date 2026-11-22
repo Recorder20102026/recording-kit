@@ -1,8 +1,7 @@
 package com.acme.reservations.persistence;
 
 import com.acme.reservations.db.TableDef;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.Resource;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.outbox.OutboxMessage;
 
 /**

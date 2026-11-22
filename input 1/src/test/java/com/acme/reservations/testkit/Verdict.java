@@ -1,7 +1,6 @@
 package com.acme.reservations.testkit;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /** Soft assertions: every check is printed, the scenario fails at the end if any check failed. */
 public final class Verdict {

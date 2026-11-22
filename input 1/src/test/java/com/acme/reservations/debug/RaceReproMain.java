@@ -2,16 +2,13 @@ package com.acme.reservations.debug;
 
 import com.acme.reservations.api.HttpResponse;
 import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Reservation;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
 import com.acme.reservations.testkit.Fixtures;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.*;
 
-import static com.acme.reservations.testkit.Fixtures.request;
-import static com.acme.reservations.testkit.Fixtures.slot;
+import static com.acme.reservations.testkit.Fixtures.*;
 
 /**
  * Minimal reproduction of INC-2291 for the debugger: two customers, two pods, partially

@@ -1,27 +1,13 @@
 package com.acme.reservations.testkit;
 
-import com.acme.reservations.suites.BurstContentionTest;
-import com.acme.reservations.suites.LockTimeoutRetryTest;
-import com.acme.reservations.suites.MultiNodeConsistencyTest;
-import com.acme.reservations.suites.OverlappingIntervalTest;
-import com.acme.reservations.suites.PartialFailureTest;
-import com.acme.reservations.suites.RegressionTest;
+import com.acme.reservations.suites.*;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.*;
+import java.lang.reflect.*;
+import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 /**
  * Zero-dependency test runner.

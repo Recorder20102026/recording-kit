@@ -1,23 +1,11 @@
 package com.acme.reservations.suites;
 
 import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.domain.CreateReservationRequest;
-import com.acme.reservations.domain.Reservation;
-import com.acme.reservations.domain.TimeInterval;
+import com.acme.reservations.domain.*;
 import com.acme.reservations.persistence.Schema;
-import com.acme.reservations.testkit.Constraints;
-import com.acme.reservations.testkit.Fixtures;
-import com.acme.reservations.testkit.Invariants;
-import com.acme.reservations.testkit.LoadRunner;
-import com.acme.reservations.testkit.RunReport;
-import com.acme.reservations.testkit.Scenario;
-import com.acme.reservations.testkit.TestRunner;
-import com.acme.reservations.testkit.Verdict;
-import com.acme.reservations.testkit.Warmup;
-import com.acme.reservations.testkit.Workloads;
+import com.acme.reservations.testkit.*;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * 20x burst on six partially overlapping hot slots + ten cold slots on the same court,
