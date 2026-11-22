@@ -1,0 +1,10 @@
+[build] OK  (36 main / 24 test sources)
+alice -> node-a [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) HTTP 201 {"reservationId":"R-42384aa9-5a96-4902-b105-4dde6a67bbb6"}
+bob   -> node-b [2026-12-05T10:30:00Z .. 2026-12-05T11:30:00Z) HTTP 201 {"reservationId":"R-076141d9-f6ba-4c09-8caa-ae5e7f7d1649"}
+
+committed reservations on COURT-1:
+  R-42384aa9-5a96-4902-b105-4dde6a67bbb6   [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z)  CONFIRMED  by node-a
+  R-076141d9-f6ba-4c09-8caa-ae5e7f7d1649   [2026-12-05T10:30:00Z .. 2026-12-05T11:30:00Z)  CONFIRMED  by node-b
+card holds at payment provider: 2
+
+>>> DOUBLE BOOKING reproduced

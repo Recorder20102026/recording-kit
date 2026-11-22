@@ -1,0 +1,689 @@
+diff -ruN a/config/reservation.properties b/config/reservation.properties
+--- a/config/reservation.properties	2026-11-20 23:12:20
++++ b/config/reservation.properties	2026-11-20 23:33:18
+@@ -18,10 +18,15 @@
+ # Horizontal pod autoscaler min replicas
+ cluster.nodes=3
+ 
+-# --- Reservation path -----------------------------------------------------
+-# RES-212 hotfix: serialize bookings per resource inside the JVM.
+-reservation.local.lock.enabled=true
++# --- Reservation path (ADR-007) -------------------------------------------
++# RES-212 JVM-local lock removed: it cannot coordinate pods. Coordination = slot_bucket rows in the DB.
++# Bucket size: must divide a day; 15 min = booking granularity, max 32 buckets for an 8h booking.
++slot.bucket.minutes=15
+ 
+-# Retry on lock timeout / transient DB errors.
+-retry.max.retries=5
+-retry.backoff.ms=10
++# Retry on lock timeout / transient DB errors only. Platform rule: max 2 retries (hard-capped in code).
++retry.max.retries=2
++# Exponential backoff with full jitter: sleep U(0, min(max, base * 2^(n-1)))
++retry.backoff.base.ms=2
++retry.backoff.max.ms=20
++# Retry-After header on 503 when the budget is spent
++retry.client.retry-after.ms=200
+diff -ruN a/docs/adr/ADR-007-reservation-locking.md b/docs/adr/ADR-007-reservation-locking.md
+--- a/docs/adr/ADR-007-reservation-locking.md	1970-01-01 05:30:00
++++ b/docs/adr/ADR-007-reservation-locking.md	2026-11-20 23:33:18
+@@ -0,0 +1,76 @@
++# ADR-007: Slot-bucket fencing for the reservation write path
++
++* Status: **Accepted**
++* Context: [INC-2291](../INCIDENT-2291.md)
++* Evidence: `./scripts/test.sh` (before/after), `./scripts/evaluate-designs.sh`
++
++## Context
++
++The create path had five defects, all reproduced by the test suites:
++
++| # | Defect | Where | Proven by |
++|---|---|---|---|
++| D1 | Overlap predicate only checks "starts during an existing booking". It misses left-partial and enclosing overlaps. | `SlotAvailabilityChecker.findConflict` (re-implements `TimeInterval.overlaps` wrongly) | `overlap` suite: left-partial and enclosing get 201 |
++| D2 | Check-then-insert race: the availability check is a plain READ COMMITTED read; nothing stops two transactions both passing it. | `ReservationService.createInTransaction` | `overlap`, `burst`, `multinode`: 3 winners for one slot |
++| D3 | The RES-212 "fix" is a JVM-local `ReentrantLock`. It serializes one pod, not the cluster. | `ReservationService.resourceLocks` | `multinode`: 1 pod = 1 winner, 3 pods = 3 winners |
++| D4 | Side effects (card hold, event) run *inside* the transaction before COMMIT. Rollback/retry leaves orphans and duplicates. | `paymentGateway.placeHold`, `eventBus.publish` in `createInTransaction` | `partial`, `timeout`: 6 orphaned holds |
++| D5 | Unbounded retry: 5 retries, fixed 10ms backoff, random reservation id per attempt, exception leaks as 500. | `RetryPolicy`, `createReservation` | `timeout`: 6 attempts, 432ms, HTTP 500 |
++
++## Constraints
++
++(a) 3+ pods. (b) Overlap of **any part** of an interval, including against rows that do not exist yet.
++(c) `lock_timeout = 50ms`, max 2 retries, amplification <= 1.10x, at 20x burst on hot slots.
++Also: no orphaned / duplicated side effects.
++
++## Options evaluated (same burst, 3 rounds, `evaluate-designs.sh`)
++
++| Design | Double bookings | Lock timeouts | Max wait | Amplification | Cold-slot max | Verdict |
++|---|---|---|---|---|---|---|
++| A: JVM-local lock, 1 pod (control) | 0 | 0 | n/a | 1.00x | ~277 ms | fine only on one pod |
++| A: JVM-local lock, 3 pods | **5** | 0 | n/a | 1.00x | ~104 ms | rejected by (a) |
++| B: optimistic version + UNIQUE(resource, start) | **12** | 0 | 10.8 ms | 1.00x | 5 ms | rejected by (b) |
++| C1: parent `SELECT ... FOR UPDATE` on resource | 0 | **268** | 51.2 ms | **1.69x** | 67 ms | rejected by (c) |
++| C2: slot-bucket fencing + version guard | 0 | 0 | 21.0 ms | 1.00x | 5 ms | **accepted** |
++
++* **A** cannot work: the lock lives in one JVM, and the other pods never see it.
++* **B** cannot work: a version column protects rows that exist. A partially overlapping rival is a new
++  row with a different start, so there is nothing to compare and nothing unique to collide on.
++* **C1** is correct but too coarse. Every booking of a court queues on one row, including cold slots
++  nobody competes for. At 20x, about 90 requests per round exceed 50ms and must retry (1.7x amplification).
++* **C2** locks only what the interval touches. Overlapping intervals always share a bucket, so they
++  serialize; everything else runs in parallel.
++
++## Decision
++
++1. **Fix the predicate** (D1): use the half-open `TimeInterval.overlaps`.
++2. **Slot-bucket fence** (D2, D3, constraint b): new table `slot_bucket(resource_id, bucket_start, version, occupants)`,
++   15-minute buckets. A booking upserts and locks the buckets its interval touches, in ascending order
++   (deadlock-free, one round trip). It stops at the first bucket that already holds an overlapping
++   booking. The authoritative overlap check runs on the locked rows.
++3. **Version guard / fencing token**: the claim is `UPDATE slot_bucket ... WHERE (pk, version) IN (...)`.
++   A moved token aborts the transaction (`40001`, retryable) instead of overwriting.
++4. **Conditional insert / idempotency**: reservation PK = `uuid(customer | Idempotency-Key)`. A replay
++   on any pod, including after a lost COMMIT ack, returns the original booking (200), never a 409 or a
++   second row.
++5. **Transactional outbox for create** (D4): `PLACE_PAYMENT_HOLD` and `RESERVATION_CREATED_EVENT`
++   are written in the same transaction and delivered by `OutboxRelay` after COMMIT, with the
++   reservation id as idempotency key.
++6. **Bounded retry** (D5): retry only `55P03` / transient errors, at most 2 retries (hard cap in code),
++   exponential backoff with full jitter (base 2ms, cap 20ms). When the budget is spent, return
++   **503 + Retry-After** instead of a 500.
++7. Remove the JVM-local lock and the `resource.booking_count` update. That hot parent-row UPDATE was
++   an accidental C1 inside every booking; the dashboard now derives the count from events.
++
++## Consequences
++
++* After: 27/27 tests green. The 20x burst gives 0 double bookings, 0 orphaned side effects, max lock
++  wait of about 20 ms, 1.00x amplification, and p99 of 23 ms (baseline p99: 114 ms). A stalled
++  holder gives the waiter a 503 after exactly 3 attempts in about 160 ms (baseline: 6 attempts,
++  432 ms, HTTP 500, 6 orphaned holds).
++* The cancel path must also free its buckets (`SlotBucketFence.release`). The regression suite
++  catches it if it doesn't.
++* Bucket size trade-off: smaller buckets mean more locks per booking; larger buckets mean
++  non-overlapping neighbours serialize. 15 min matches booking granularity; max 32 buckets for an 8h booking.
++* Ops: `slot_bucket` grows with the calendar. Add a nightly job deleting buckets older than 7 days,
++  and backfill buckets from existing confirmed reservations before enabling (migration script).
++* Bookings now become visible to downstream systems up to one relay interval (100ms) after COMMIT.
+diff -ruN a/src/main/java/com/acme/reservations/cluster/ServiceNode.java b/src/main/java/com/acme/reservations/cluster/ServiceNode.java
+--- a/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-20 23:13:20
++++ b/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-20 23:33:18
+@@ -34,9 +34,9 @@
+         ReservationRepository reservations = new ReservationRepository();
+         ResourceRepository resources = new ResourceRepository();
+         OutboxRepository outbox = new OutboxRepository(db);
++        // The service no longer talks to the payment gateway / event bus directly: the outbox relay does.
+         this.service = new ReservationService(name, db, reservations, resources, outbox,
+-                new SlotAvailabilityChecker(reservations), paymentGateway, eventBus,
+-                RetryPolicy.fromConfig(config), config, metrics);
++                new SlotAvailabilityChecker(reservations), RetryPolicy.fromConfig(config), config, metrics);
+         this.controller = new ReservationController(service);
+         this.outboxRelay = new OutboxRelay(db, outbox, paymentGateway, eventBus);
+     }
+diff -ruN a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/src/main/java/com/acme/reservations/config/ReservationConfig.java
+--- a/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-20 23:12:20
++++ b/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-20 23:33:18
+@@ -20,9 +20,11 @@
+                                 long paymentLatencyMaxMillis,
+                                 long eventBusLatencyMillis,
+                                 int clusterNodes,
+-                                boolean localLockEnabled,
+                                 int maxRetries,
+-                                Duration retryBackoff) {
++                                Duration retryBackoffBase,
++                                Duration retryBackoffMax,
++                                Duration clientRetryAfter,
++                                Duration slotBucketSize) {
+ 
+     public static ReservationConfig load() {
+         Path path = Path.of(System.getProperty("reservation.config", "config/reservation.properties"));
+@@ -44,9 +46,11 @@
+                 longOf(p, "payment.latency.max.ms", 6),
+                 longOf(p, "eventbus.latency.ms", 1),
+                 (int) longOf(p, "cluster.nodes", 3),
+-                Boolean.parseBoolean(p.getProperty("reservation.local.lock.enabled", "true").trim()),
+-                (int) longOf(p, "retry.max.retries", 5),
+-                Duration.ofMillis(longOf(p, "retry.backoff.ms", 10)));
++                (int) longOf(p, "retry.max.retries", 2),
++                Duration.ofMillis(longOf(p, "retry.backoff.base.ms", 2)),
++                Duration.ofMillis(longOf(p, "retry.backoff.max.ms", 20)),
++                Duration.ofMillis(longOf(p, "retry.client.retry-after.ms", 200)),
++                Duration.ofMinutes(longOf(p, "slot.bucket.minutes", 15)));
+     }
+ 
+     public DbConfig dbConfig() {
+diff -ruN a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/main/java/com/acme/reservations/persistence/Schema.java
+--- a/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-20 23:11:45
++++ b/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-20 23:33:18
+@@ -16,6 +16,8 @@
+  *                           amount_cents bigint, payment_hold_key text, created_by_node text, version bigint);
+  * CREATE INDEX reservation_resource_time ON reservation (resource_id, starts_at);
+  * CREATE TABLE outbox      (id text PRIMARY KEY, type text, payload jsonb, status text, created_at timestamptz);
++ * CREATE TABLE slot_bucket (resource_id text, bucket_start timestamptz, version bigint, occupants jsonb,
++ *                           PRIMARY KEY (resource_id, bucket_start));                      -- ADR-007
+  * </pre>
+  */
+ public final class Schema {
+@@ -23,6 +25,7 @@
+     public static final TableDef<Resource> RESOURCES = new TableDef<>("resource");
+     public static final TableDef<Reservation> RESERVATIONS = new TableDef<>("reservation");
+     public static final TableDef<OutboxMessage> OUTBOX = new TableDef<>("outbox");
++    public static final TableDef<SlotBucket> SLOT_BUCKETS = new TableDef<>("slot_bucket");
+ 
+     private Schema() {
+     }
+diff -ruN a/src/main/java/com/acme/reservations/persistence/SlotBucket.java b/src/main/java/com/acme/reservations/persistence/SlotBucket.java
+--- a/src/main/java/com/acme/reservations/persistence/SlotBucket.java	1970-01-01 05:30:00
++++ b/src/main/java/com/acme/reservations/persistence/SlotBucket.java	2026-11-20 23:33:18
+@@ -0,0 +1,45 @@
++package com.acme.reservations.persistence;
++
++import com.acme.reservations.domain.TimeInterval;
++
++import java.time.Instant;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Optional;
++
++/**
++ * Row of the {@code slot_bucket} table (ADR-007): one row per resource per fixed-size time bucket.
++ * <pre>
++ * CREATE TABLE slot_bucket (resource_id text, bucket_start timestamptz, version bigint,
++ *                           occupants jsonb,             -- [{reservation_id, starts_at, ends_at}]
++ *                           PRIMARY KEY (resource_id, bucket_start));
++ * </pre>
++ * The row is the lock target ("fence") for every booking that touches the bucket, so it gives us a
++ * row to lock even when the competing reservation does not exist yet. {@code version} is the fencing
++ * token: every claim / release bumps it and is applied with a version-guarded UPDATE.
++ */
++public record SlotBucket(String key, String resourceId, Instant bucketStart, long version, List<Occupant> occupants) {
++
++    /** A confirmed reservation whose interval intersects this bucket. */
++    public record Occupant(String reservationId, TimeInterval interval) {
++    }
++
++    public static SlotBucket empty(String key, String resourceId, Instant bucketStart) {
++        return new SlotBucket(key, resourceId, bucketStart, 0, List.of());
++    }
++
++    public Optional<Occupant> clashWith(TimeInterval requested) {
++        return occupants.stream().filter(o -> o.interval().overlaps(requested)).findFirst();
++    }
++
++    public SlotBucket withOccupant(Occupant occupant) {
++        List<Occupant> next = new ArrayList<>(occupants);
++        next.add(occupant);
++        return new SlotBucket(key, resourceId, bucketStart, version + 1, List.copyOf(next));
++    }
++
++    public SlotBucket withoutOccupant(String reservationId) {
++        List<Occupant> next = occupants.stream().filter(o -> !o.reservationId().equals(reservationId)).toList();
++        return new SlotBucket(key, resourceId, bucketStart, version + 1, next);
++    }
++}
+diff -ruN a/src/main/java/com/acme/reservations/service/ReservationService.java b/src/main/java/com/acme/reservations/service/ReservationService.java
+--- a/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-20 23:12:48
++++ b/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-20 23:33:18
+@@ -2,9 +2,7 @@
+ 
+ import com.acme.reservations.config.ReservationConfig;
+ import com.acme.reservations.db.Database;
+-import com.acme.reservations.db.LockWaitTimeoutException;
+ import com.acme.reservations.db.Transaction;
+-import com.acme.reservations.db.TransientDbException;
+ import com.acme.reservations.domain.CreateReservationRequest;
+ import com.acme.reservations.domain.Reservation;
+ import com.acme.reservations.domain.ReservationResult;
+@@ -14,19 +12,16 @@
+ import com.acme.reservations.persistence.OutboxRepository;
+ import com.acme.reservations.persistence.ReservationRepository;
+ import com.acme.reservations.persistence.ResourceRepository;
+-import com.acme.reservations.sideeffects.EventBus;
+-import com.acme.reservations.sideeffects.PaymentGateway;
+-import com.acme.reservations.sideeffects.PaymentHold;
+-import com.acme.reservations.sideeffects.ReservationEvent;
++import com.acme.reservations.persistence.SlotBucket;
+ 
++import java.nio.charset.StandardCharsets;
+ import java.time.Duration;
+ import java.util.Optional;
+ import java.util.UUID;
+-import java.util.concurrent.ConcurrentHashMap;
+-import java.util.concurrent.locks.ReentrantLock;
+ 
+ /**
+- * Reservation write path. One instance per service node (pod).
++ * Reservation write path. One instance per service node (pod); holds NO cross-request state -
++ * every coordination decision is made in the shared database (ADR-007).
+  */
+ public final class ReservationService {
+ 
+@@ -38,24 +33,16 @@
+     private final ResourceRepository resources;
+     private final OutboxRepository outbox;
+     private final SlotAvailabilityChecker availability;
+-    private final PaymentGateway paymentGateway;
+-    private final EventBus eventBus;
++    private final SlotBucketFence bucketFence;
+     private final RetryPolicy retryPolicy;
+-    private final ReservationConfig config;
+     private final ServiceMetrics metrics;
+ 
+-    // RES-212 (hotfix): serialize bookings per resource so two requests can't both pass the
+-    // availability check. Fixed the double bookings we saw in staging.
+-    private final ConcurrentHashMap<String, ReentrantLock> resourceLocks = new ConcurrentHashMap<>();
+-
+     public ReservationService(String nodeName,
+                               Database db,
+                               ReservationRepository reservations,
+                               ResourceRepository resources,
+                               OutboxRepository outbox,
+                               SlotAvailabilityChecker availability,
+-                              PaymentGateway paymentGateway,
+-                              EventBus eventBus,
+                               RetryPolicy retryPolicy,
+                               ReservationConfig config,
+                               ServiceMetrics metrics) {
+@@ -65,10 +52,8 @@
+         this.resources = resources;
+         this.outbox = outbox;
+         this.availability = availability;
+-        this.paymentGateway = paymentGateway;
+-        this.eventBus = eventBus;
++        this.bucketFence = new SlotBucketFence(config.slotBucketSize());
+         this.retryPolicy = retryPolicy;
+-        this.config = config;
+         this.metrics = metrics;
+     }
+ 
+@@ -79,79 +64,92 @@
+         if (invalid.isPresent()) {
+             return invalid.get();
+         }
++        String reservationId = reservationIdFor(request);
+ 
+-        int attempt = 0;
+-        try {
+-            while (true) {
+-                attempt++;
+-                final int currentAttempt = attempt;
+-                ReentrantLock localLock = config.localLockEnabled()
+-                        ? resourceLocks.computeIfAbsent(request.resourceId(), id -> new ReentrantLock())
+-                        : null;
+-                if (localLock != null) {
+-                    localLock.lock();
+-                }
+-                try {
+-                    return db.inTransaction("reservation.create",
+-                            tx -> createInTransaction(tx, request, currentAttempt));
+-                } catch (LockWaitTimeoutException | TransientDbException e) {
+-                    if (!retryPolicy.shouldRetry(attempt)) {
+-                        throw e;
+-                    }
+-                    metrics.recordRetry();
+-                    retryPolicy.backoff(attempt);
+-                } finally {
+-                    if (localLock != null) {
+-                        localLock.unlock();
+-                    }
+-                }
+-            }
+-        } finally {
+-            metrics.recordCreate(attempt);
+-        }
++        ReservationResult result = retryPolicy.execute(
++                attempt -> db.inTransaction("reservation.create",
++                        tx -> createInTransaction(tx, request, reservationId, attempt)),
++                metrics::recordRetry,
++                (failure, attempts) -> new ReservationResult.Busy("LOCK_CONTENTION: " + failure.getMessage(),
++                        retryPolicy.retryAfter(), attempts));
++
++        metrics.recordCreate(result.attempts());
++        return result;
+     }
+ 
+-    private ReservationResult createInTransaction(Transaction tx, CreateReservationRequest request, int attempt) {
++    private ReservationResult createInTransaction(Transaction tx, CreateReservationRequest request,
++                                                  String reservationId, int attempt) {
++        // 0. Idempotent replay (client retry, lost COMMIT ack, LB re-route): hand back what we already booked.
++        Optional<Reservation> existing = reservations.findById(tx, reservationId);
++        if (existing.isPresent()) {
++            return replay(existing.get(), request, attempt);
++        }
++
+         Optional<Resource> resource = resources.findById(tx, request.resourceId());
+         if (resource.isEmpty() || !resource.get().active()) {
+             return new ReservationResult.Rejected("UNKNOWN_RESOURCE", attempt);
+         }
+ 
+-        // 1. Is the slot free?
+-        Optional<Reservation> clash = availability.findConflict(tx, request.resourceId(), request.interval());
+-        if (clash.isPresent()) {
+-            return new ReservationResult.Conflict(request.resourceId(), request.interval(), clash.get().id(), attempt);
++        // 1. Fast path, no locks: most burst losers are rejected here once the winner has committed.
++        Optional<Reservation> committedClash = availability.findConflict(tx, request.resourceId(), request.interval());
++        if (committedClash.isPresent()) {
++            return new ReservationResult.Conflict(request.resourceId(), request.interval(),
++                    committedClash.get().id(), attempt);
+         }
+ 
+-        String reservationId = "R-" + UUID.randomUUID();
+-        long amount = resource.get().priceFor(request.interval());
++        // 2. Fence: lock ONLY the slot buckets this interval touches (upserted, sorted, lock_timeout = 50ms).
++        SlotBucketFence.Fence fence = bucketFence.acquire(tx, request.resourceId(), request.interval());
+ 
+-        // 2. Secure the money before we hand out the slot.
+-        String holdKey = UUID.randomUUID().toString();
+-        PaymentHold hold = paymentGateway.placeHold(holdKey, reservationId, request.customerId(), amount);
++        // 3. Authoritative overlap check on the bucket rows we now hold locks on.
++        Optional<SlotBucket.Occupant> clash = fence.clash();
++        if (clash.isPresent()) {
++            if (clash.get().reservationId().equals(reservationId)) {
++                // Our own retry won the race on another pod a moment ago.
++                return replay(reservations.findById(tx, reservationId).orElseThrow(), request, attempt);
++            }
++            return new ReservationResult.Conflict(request.resourceId(), request.interval(),
++                    clash.get().reservationId(), attempt);
++        }
+ 
+-        // 3. Persist the reservation.
++        // 4. Conditional insert (PK derived from the Idempotency-Key) + version guard on every bucket.
++        long amount = resource.get().priceFor(request.interval());
+         Reservation reservation = new Reservation(reservationId, request.requestId(), request.resourceId(),
+                 request.customerId(), request.interval(), ReservationStatus.CONFIRMED, amount,
+-                hold.idempotencyKey(), nodeName, 1);
++                reservationId, nodeName, 1);
+         reservations.insert(tx, reservation);
++        fence.claim(tx, reservationId);
+ 
+-        // 4. Ops dashboard counter.
+-        resources.incrementBookingCount(tx, request.resourceId());
++        // 5. Side effects go to the outbox in the SAME transaction; OutboxRelay delivers them after COMMIT.
++        //    Rolled back => nothing was ever sent. Retried => same idempotency keys, nothing sent twice.
++        outbox.enqueue(tx, OutboxMessage.Type.PLACE_PAYMENT_HOLD, reservationId, request.resourceId(),
++                request.customerId(), amount, reservation.paymentHoldKey());
++        outbox.enqueue(tx, OutboxMessage.Type.RESERVATION_CREATED_EVENT, reservationId, request.resourceId(),
++                request.customerId(), 0, "created:" + reservationId);
+ 
+-        // 5. Tell the world (notifications, calendar sync, billing).
+-        eventBus.publish(new ReservationEvent(UUID.randomUUID().toString(),
+-                ReservationEvent.Type.RESERVATION_CREATED, reservationId, request.resourceId(),
+-                request.customerId()));
+-
+         return new ReservationResult.Booked(reservation, attempt, false);
+     }
+ 
++    private ReservationResult replay(Reservation existing, CreateReservationRequest request, int attempt) {
++        boolean samePayload = existing.resourceId().equals(request.resourceId())
++                && existing.interval().equals(request.interval())
++                && existing.customerId().equals(request.customerId());
++        if (!samePayload) {
++            return new ReservationResult.Rejected("IDEMPOTENCY_KEY_REUSED", attempt);
++        }
++        return new ReservationResult.Booked(existing, attempt, true);
++    }
++
++    /** Same customer + same Idempotency-Key always maps to the same primary key. */
++    static String reservationIdFor(CreateReservationRequest request) {
++        String scoped = request.customerId() + "|" + request.requestId();
++        return "R-" + UUID.nameUUIDFromBytes(scoped.getBytes(StandardCharsets.UTF_8));
++    }
++
+     // ------------------------------------------------------------------ cancel
+ 
+     public enum CancelOutcome { CANCELLED, NOT_FOUND, ALREADY_CANCELLED, CONCURRENT_MODIFICATION }
+ 
+-    /** Cancel path - already migrated to the transactional outbox (RES-318). */
++    /** Cancel path - transactional outbox (RES-318) + frees the slot buckets. */
+     public CancelOutcome cancelReservation(String reservationId) {
+         return db.inTransaction("reservation.cancel", tx -> {
+             Optional<Reservation> found = reservations.findByIdForUpdate(tx, reservationId);
+@@ -165,6 +163,7 @@
+             if (!reservations.markCancelled(tx, reservation)) {
+                 return CancelOutcome.CONCURRENT_MODIFICATION;
+             }
++            bucketFence.release(tx, reservation);
+             outbox.enqueue(tx, OutboxMessage.Type.RELEASE_PAYMENT_HOLD, reservation.id(), reservation.resourceId(),
+                     reservation.customerId(), reservation.amountCents(), reservation.paymentHoldKey());
+             outbox.enqueue(tx, OutboxMessage.Type.RESERVATION_CANCELLED_EVENT, reservation.id(),
+diff -ruN a/src/main/java/com/acme/reservations/service/RetryPolicy.java b/src/main/java/com/acme/reservations/service/RetryPolicy.java
+--- a/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-20 23:12:20
++++ b/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-20 23:33:18
+@@ -1,32 +1,73 @@
+ package com.acme.reservations.service;
+ 
+ import com.acme.reservations.config.ReservationConfig;
++import com.acme.reservations.db.LockWaitTimeoutException;
++import com.acme.reservations.db.TransientDbException;
+ import com.acme.reservations.support.Latency;
+ 
+ import java.time.Duration;
++import java.util.concurrent.ThreadLocalRandom;
++import java.util.function.BiFunction;
++import java.util.function.IntFunction;
+ 
+-/** Retry settings for the reservation write path. */
++/**
++ * Bounded retry for the reservation write path.
++ * <ul>
++ *   <li>Retries ONLY lock timeouts and transient DB errors - never business outcomes (409, 400).</li>
++ *   <li>At most {@value #HARD_MAX_RETRIES} retries, whatever the config says (SRE retry budget).</li>
++ *   <li>Exponential backoff with full jitter, so contenders do not come back in lock-step.</li>
++ *   <li>When the budget is spent the caller gets a value (503 + Retry-After), not an exception.</li>
++ * </ul>
++ */
+ public final class RetryPolicy {
+ 
++    public static final int HARD_MAX_RETRIES = 2;
++
+     private final int maxRetries;
+-    private final Duration backoff;
++    private final Duration baseBackoff;
++    private final Duration maxBackoff;
++    private final Duration clientRetryAfter;
+ 
+-    public RetryPolicy(int maxRetries, Duration backoff) {
+-        this.maxRetries = maxRetries;
+-        this.backoff = backoff;
++    public RetryPolicy(int maxRetries, Duration baseBackoff, Duration maxBackoff, Duration clientRetryAfter) {
++        this.maxRetries = Math.max(0, Math.min(maxRetries, HARD_MAX_RETRIES));
++        this.baseBackoff = baseBackoff;
++        this.maxBackoff = maxBackoff;
++        this.clientRetryAfter = clientRetryAfter;
+     }
+ 
+     public static RetryPolicy fromConfig(ReservationConfig config) {
+-        return new RetryPolicy(config.maxRetries(), config.retryBackoff());
++        return new RetryPolicy(config.maxRetries(), config.retryBackoffBase(), config.retryBackoffMax(),
++                config.clientRetryAfter());
+     }
+ 
+-    /** @param attemptsSoFar number of attempts already made (1 after the first failure) */
+-    public boolean shouldRetry(int attemptsSoFar) {
+-        return attemptsSoFar <= maxRetries;
++    /**
++     * Runs {@code attempt} (called with attempt number 1, 2, 3 ...) until it returns or the budget is spent.
++     *
++     * @param onRetry     called before every retry (metrics)
++     * @param onExhausted maps the last failure and the number of attempts made to a result
++     */
++    public <T> T execute(IntFunction<T> attempt, Runnable onRetry, BiFunction<RuntimeException, Integer, T> onExhausted) {
++        for (int n = 1; ; n++) {
++            try {
++                return attempt.apply(n);
++            } catch (LockWaitTimeoutException | TransientDbException e) {
++                if (n > maxRetries) {
++                    return onExhausted.apply(e, n);
++                }
++                onRetry.run();
++                backoff(n);
++            }
++        }
+     }
+ 
+-    public void backoff(int attemptsSoFar) {
+-        Latency.park(backoff);
++    /** Full jitter: sleep a uniform random time in [0, min(max, base * 2^(n-1))]. */
++    private void backoff(int attemptsSoFar) {
++        long capMicros = Math.min(maxBackoff.toNanos() / 1_000, (baseBackoff.toNanos() / 1_000) << (attemptsSoFar - 1));
++        Latency.parkMicros(ThreadLocalRandom.current().nextLong(capMicros + 1));
++    }
++
++    public Duration retryAfter() {
++        return clientRetryAfter;
+     }
+ 
+     public int maxRetries() {
+diff -ruN a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java
+--- a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-20 23:12:20
++++ b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-20 23:33:18
+@@ -5,7 +5,6 @@
+ import com.acme.reservations.domain.TimeInterval;
+ import com.acme.reservations.persistence.ReservationRepository;
+ 
+-import java.time.Instant;
+ import java.util.Optional;
+ 
+ /** Answers "is this resource free for this interval?" against the reservation table. */
+@@ -19,15 +18,13 @@
+ 
+     /**
+      * Returns an existing confirmed reservation that clashes with {@code requested}, if any.
+-     * <p>Plain (non-locking) read: sees committed rows only.
++     * <p>Plain (non-locking) read: sees committed rows only. Used as the cheap fast path; the
++     * authoritative decision is taken under the slot-bucket fence (see {@link SlotBucketFence}).
+      */
+     public Optional<Reservation> findConflict(Transaction tx, String resourceId, TimeInterval requested) {
+         for (Reservation existing : reservations.findActiveByResource(tx, resourceId)) {
+-            // A booking clashes when it would start while another booking is still running.
+-            Instant requestedStart = requested.start();
+-            boolean startsDuringExisting = !requestedStart.isBefore(existing.interval().start())
+-                    && requestedStart.isBefore(existing.interval().end());
+-            if (startsDuringExisting) {
++            // Half-open overlap: catches left/right partial, contained, enclosing and identical intervals.
++            if (existing.interval().overlaps(requested)) {
+                 return Optional.of(existing);
+             }
+         }
+diff -ruN a/src/main/java/com/acme/reservations/service/SlotBucketFence.java b/src/main/java/com/acme/reservations/service/SlotBucketFence.java
+--- a/src/main/java/com/acme/reservations/service/SlotBucketFence.java	1970-01-01 05:30:00
++++ b/src/main/java/com/acme/reservations/service/SlotBucketFence.java	2026-11-20 23:33:18
+@@ -0,0 +1,120 @@
++package com.acme.reservations.service;
++
++import com.acme.reservations.db.Transaction;
++import com.acme.reservations.db.TransientDbException;
++import com.acme.reservations.domain.Reservation;
++import com.acme.reservations.domain.TimeInterval;
++import com.acme.reservations.persistence.Schema;
++import com.acme.reservations.persistence.SlotBucket;
++
++import java.time.Duration;
++import java.time.Instant;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++
++/**
++ * Scoped key fencing for the reservation write path (ADR-007).
++ *
++ * <p>Time is cut into fixed buckets per resource (15 min by default). A booking locks exactly the buckets
++ * its interval touches. Two intervals that overlap always share at least one bucket, so they serialize on
++ * that row; bookings for other times on the same resource touch other rows and run in parallel.
++ *
++ * <ul>
++ *   <li><b>Multi-node:</b> the locks are rows in the shared database, visible to every pod.</li>
++ *   <li><b>Non-existent rows:</b> bucket rows are upserted on demand, so there is always a row to lock,
++ *       even when the competing reservation has not been written yet.</li>
++ *   <li><b>Deadlock-free:</b> keys are always locked in ascending time order.</li>
++ *   <li><b>Bounded waits:</b> every lock wait is capped by the DB {@code lock_timeout} (50ms); a doomed
++ *       request stops at the first bucket that already holds an overlapping booking and releases at once.</li>
++ *   <li><b>Version guard:</b> claims/releases are {@code UPDATE ... WHERE version = :seen}; if a token moved,
++ *       the transaction aborts instead of silently overwriting.</li>
++ * </ul>
++ */
++public final class SlotBucketFence {
++
++    private final Duration bucketSize;
++
++    public SlotBucketFence(Duration bucketSize) {
++        if (bucketSize.isZero() || bucketSize.isNegative() || Duration.ofDays(1).toSeconds() % bucketSize.toSeconds() != 0) {
++            throw new IllegalArgumentException("bucket size must divide a day evenly: " + bucketSize);
++        }
++        this.bucketSize = bucketSize;
++    }
++
++    /** Sorted keys of every bucket that {@code [start, end)} touches. */
++    public List<String> bucketKeys(String resourceId, TimeInterval interval) {
++        long size = bucketSize.toSeconds();
++        long first = Math.floorDiv(interval.start().getEpochSecond(), size);
++        long last = Math.floorDiv(interval.end().getEpochSecond() - 1, size);
++        List<String> keys = new ArrayList<>((int) (last - first + 1));
++        for (long b = first; b <= last; b++) {
++            keys.add(key(resourceId, Instant.ofEpochSecond(b * size)));
++        }
++        return keys;
++    }
++
++    /**
++     * Upserts and locks the buckets of {@code interval} in order (one round trip). Stops right after the
++     * first bucket that already holds an overlapping booking - that request is going to get a 409 anyway.
++     */
++    public Fence acquire(Transaction tx, String resourceId, TimeInterval interval) {
++        List<SlotBucket> locked = tx.upsertAllForUpdate(Schema.SLOT_BUCKETS, bucketKeys(resourceId, interval),
++                key -> SlotBucket.empty(key, resourceId, bucketStartOf(key)),
++                bucket -> bucket.clashWith(interval).isPresent());
++        return new Fence(interval, locked);
++    }
++
++    /** Cancel path: remove the reservation from every bucket it occupied (version-guarded). */
++    public void release(Transaction tx, Reservation reservation) {
++        List<SlotBucket> locked = tx.upsertAllForUpdate(Schema.SLOT_BUCKETS,
++                bucketKeys(reservation.resourceId(), reservation.interval()),
++                key -> SlotBucket.empty(key, reservation.resourceId(), bucketStartOf(key)));
++        guardedUpdate(tx, locked, bucket -> bucket.withoutOccupant(reservation.id()));
++    }
++
++    /** The set of bucket rows this transaction holds locks on. */
++    public final class Fence {
++
++        private final TimeInterval interval;
++        private final List<SlotBucket> buckets;
++
++        private Fence(TimeInterval interval, List<SlotBucket> buckets) {
++            this.interval = interval;
++            this.buckets = buckets;
++        }
++
++        /** Authoritative overlap check, evaluated on the rows we hold locks on. */
++        public Optional<SlotBucket.Occupant> clash() {
++            return buckets.stream().map(b -> b.clashWith(interval)).flatMap(Optional::stream).findFirst();
++        }
++
++        /** Records the reservation in every bucket and advances each fencing token. */
++        public void claim(Transaction tx, String reservationId) {
++            SlotBucket.Occupant me = new SlotBucket.Occupant(reservationId, interval);
++            guardedUpdate(tx, buckets, bucket -> bucket.withOccupant(me));
++        }
++    }
++
++    private static void guardedUpdate(Transaction tx, List<SlotBucket> seen,
++                                      java.util.function.UnaryOperator<SlotBucket> change) {
++        Map<String, Long> expected = new LinkedHashMap<>();
++        for (SlotBucket bucket : seen) {
++            expected.put(bucket.key(), bucket.version());
++        }
++        int updated = tx.updateWhereVersion(Schema.SLOT_BUCKETS, expected, SlotBucket::version, change);
++        if (updated != expected.size()) {
++            throw new TransientDbException("40001 fencing token moved on slot_bucket " + expected.keySet());
++        }
++    }
++
++    private static String key(String resourceId, Instant bucketStart) {
++        return resourceId + "@" + bucketStart;
++    }
++
++    private static Instant bucketStartOf(String key) {
++        return Instant.parse(key.substring(key.lastIndexOf('@') + 1));
++    }
++}

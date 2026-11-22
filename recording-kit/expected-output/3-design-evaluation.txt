@@ -1,0 +1,44 @@
+[build] OK  (36 main / 24 test sources)
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ Locking design evaluation - 3 rounds each, 20x burst on 6 hot slots + 10 cold slots, lock_timeout=50ms, max 2 retries
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+▶ A  JVM-local per-resource lock (1 pod)   - probes (a) horizontal multi-instance deployment
+   round 1: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99= 275.5 ms cold-slot max= 263.2 ms
+   round 2: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99= 272.9 ms cold-slot max= 220.0 ms
+   round 3: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99= 276.8 ms cold-slot max= 276.8 ms
+
+▶ A  JVM-local per-resource lock (3 pods)   - probes (a) horizontal multi-instance deployment
+   round 1: 201=16  409=114 503=0   | double bookings=2  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99=  90.1 ms cold-slot max=  84.4 ms
+   round 2: 201=15  409=115 503=0   | double bookings=2  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99= 120.8 ms cold-slot max= 104.1 ms
+   round 3: 201=15  409=115 503=0   | double bookings=1  | lock timeouts=0   max wait=  0.0 ms | retries=0   max attempts=1 amplification=1.00x | p99=  88.2 ms cold-slot max=  91.9 ms
+
+▶ B  optimistic row version + UNIQUE(resource,start) (3 pods)   - probes (b) partial overlap across non-existent rows
+   round 1: 201=16  409=114 503=0   | double bookings=4  | lock timeouts=0   max wait=  9.2 ms | retries=0   max attempts=1 amplification=1.00x | p99=  11.2 ms cold-slot max=   4.8 ms
+   round 2: 201=16  409=114 503=0   | double bookings=4  | lock timeouts=0   max wait= 10.8 ms | retries=0   max attempts=1 amplification=1.00x | p99=  13.5 ms cold-slot max=   5.4 ms
+   round 3: 201=16  409=114 503=0   | double bookings=4  | lock timeouts=0   max wait= 10.7 ms | retries=0   max attempts=1 amplification=1.00x | p99=  12.8 ms cold-slot max=   4.7 ms
+
+▶ C1  parent-resource SELECT ... FOR UPDATE (3 pods)   - probes (c) 50ms lock wait + 2 retries under 20x burst
+   round 1: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=90  max wait= 50.3 ms | retries=90  max attempts=2 amplification=1.69x | p99=  65.2 ms cold-slot max=  67.2 ms
+   round 2: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=89  max wait= 51.2 ms | retries=89  max attempts=2 amplification=1.68x | p99=  64.1 ms cold-slot max=  66.7 ms
+   round 3: 201=13  409=117 503=0   | double bookings=0  | lock timeouts=89  max wait= 51.2 ms | retries=89  max attempts=2 amplification=1.68x | p99=  64.2 ms cold-slot max=  66.5 ms
+
+▶ C2  slot-bucket fencing + version guard (3 pods)   - probes (a) + (b) + (c)
+   round 1: 201=14  409=116 503=0   | double bookings=0  | lock timeouts=0   max wait= 10.3 ms | retries=0   max attempts=1 amplification=1.00x | p99=  12.4 ms cold-slot max=   4.7 ms
+   round 2: 201=13  409=117 503=0   | double bookings=0  | lock timeouts=0   max wait= 20.1 ms | retries=0   max attempts=1 amplification=1.00x | p99=  22.2 ms cold-slot max=   4.6 ms
+   round 3: 201=13  409=117 503=0   | double bookings=0  | lock timeouts=0   max wait= 21.0 ms | retries=0   max attempts=1 amplification=1.00x | p99=  23.4 ms cold-slot max=   5.5 ms
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ design (worst round)                                       | dbl-books |  503 | lock t/o | max wait |  ampl. | cold max | verdict                     
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ A  JVM-local per-resource lock (1 pod)                     |         0 |    0 |        0 |   0.0 ms |  1.00x |  277 ms | control - prod runs 3 pods  
+ A  JVM-local per-resource lock (3 pods)                    |         5 |    0 |        0 |   0.0 ms |  1.00x |  104 ms | REJECT - double bookings    
+ B  optimistic row version + UNIQUE(resource,start) (3 pods) |        12 |    0 |        0 |  10.8 ms |  1.00x |    5 ms | REJECT - double bookings    
+ C1  parent-resource SELECT ... FOR UPDATE (3 pods)         |         0 |    0 |      268 |  51.2 ms |  1.69x |   67 ms | REJECT - breaks 50ms/2-retry
+ C2  slot-bucket fencing + version guard (3 pods)           |         0 |    0 |        0 |  21.0 ms |  1.00x |    5 ms | ACCEPT - meets (a)(b)(c)    
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ (a) multi-instance: locks must live in the shared DB, not the JVM        -> rules out A
+ (b) partial overlap: the rival row does not exist yet, nothing to version -> rules out B
+ (c) 50ms lock_timeout + 2 retries at 20x: one lock per court is too coarse -> rules out C1
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ RESULT: C2 (slot-bucket fencing + version guard) is the only design meeting all constraints
