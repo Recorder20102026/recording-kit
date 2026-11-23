@@ -1,0 +1,71 @@
+[build] OK  (40 main / 18 test sources)
+════════════════════════════════════════════════════════════════════════════════════════════════════
+ reservation-service test run  2026-11-23T06:46:21  suites=[BurstContentionTest, LockTimeoutRetryTest]
+ config/reservation.properties: db.lock.wait.timeout.ms=50  cluster.nodes=3  retry.max.retries=2  retry.backoff.base.ms=2  retry.backoff.max.ms=20  slot.bucket.minutes=15  reservation.locking.strategy=pessimistic
+ constraints: lock wait <= 50ms, retries <= 2, burst = 20x, nodes = 3, amplification <= 1.10x
+════════════════════════════════════════════════════════════════════════════════════════════════════
+
+▶ BurstContentionTest
+   ● noDoubleBookings - no two confirmed reservations overlap after the burst
+      (JIT warm-up: 2 discarded burst runs, 497 ms)
+      ┌─ hot-slot burst: 130 requests, 3 pods, 20x on 6 hot slots + 10 cold slots
+      │ responses    201=14  200(replay)=0  409=116  4xx=0  503=0  500=0   conflict rate 89.2%
+      │ correctness  double bookings=0   unjustified 409s=0
+      │ side effects orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0
+      │ retries      attempts=204  retries=74  max attempts/request=2  amplification=1.57x
+      │ db locks     contended waits=124  lock timeouts=74  max wait=50.3 ms  p99 wait=50.3 ms
+      │ latency      p50=54.2 ms  p99=68.4 ms  max=70.8 ms   wall=76 ms
+      └─
+      booked per hot slot: 09:00-10:00=1  09:30-10:30=0  10:00-11:00=1  10:45-11:15=0  11:00-12:00=1  13:00-14:00=1  
+      ✔ overlapping confirmed reservation pairs                        expected 0, got 0
+   [PASS] noDoubleBookings (783 ms)
+
+   ● definitiveAnswers - every client gets a definitive, truthful answer (201 or a justified 409)
+      ✔ 503 responses (gave up)                                        expected 0, got 0
+      ✔ 500 responses (exception leaked)                               expected 0, got 0
+      ✔ 409s not explained by a committed overlapping booking          expected 0, got 0
+      ✔ cold slots on the hot court booked                             expected 10, got 10
+   [PASS] definitiveAnswers (5 ms)
+
+   ● lockWaitAndRetryBudget - lock waits stay inside 50ms and retries inside the 2-retry budget
+      ✔ max single lock wait                                           50.26ms (limit 52.00ms)
+      ✔ lock_timeout aborts (each must be absorbed by the retry budget) 74 aborts, 74 retries
+      ✔ max attempts per request <= 3                                  got 2
+      ✘ retry amplification (attempts / requests)                      1.57x (limit 1.10x)
+   [FAIL] lockWaitAndRetryBudget (3 ms)
+
+   ● noPartialState - no orphaned / duplicated / missing side effects after the outbox drains
+      ✔ side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
+   [PASS] noPartialState (0 ms)
+
+
+▶ LockTimeoutRetryTest
+   ● stalledHolderBoundedWaiter - lock holder stalls 600ms -> waiter times out at 50ms, retries <= 2, answers 503
+        waiter: HTTP 503 {"error":"BUSY","retryAfterMs":200}  attempts=3  latency=166 ms  lock timeouts=3  max wait=50.2 ms
+      ✔ stalled holder eventually books                                expected 201, got 201
+      ✔ waiter answered 503 + Retry-After (not 500, not a double booking) expected 503, got 503
+      ✔ waiter attempts <= 3                                           got 3
+      ✔ each lock wait                                                 50.25ms (limit 52.00ms)
+      ✔ waiter gives up within                                         165.51ms (limit 250.00ms)
+      ✔ double bookings                                                expected 0, got 0
+      ✔ side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
+   [PASS] stalledHolderBoundedWaiter (638 ms)
+
+   ● persistentFailuresRespectRetryBudget - persistent COMMIT failures -> stop after 2 retries, no money left on hold
+        HTTP 503 {"error":"BUSY","retryAfterMs":200}  attempts=3  payment calls=0
+      ✔ attempts <= 3                                                  got 3
+      ✔ client gets 503 + Retry-After                                  expected 503, got 503
+      ✔ active card holds left behind                                  expected 0, got 0
+      ✔ side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
+   [PASS] persistentFailuresRespectRetryBudget (23 ms)
+
+   ● conflictIsNotRetried - a business conflict (409) is never retried
+      ✔ HTTP                                                           expected 409, got 409
+      ✔ attempts for the conflicting request                           expected 1, got 1
+      ✔ retries                                                        expected 0, got 0
+   [PASS] conflictIsNotRetried (8 ms)
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+ RESULT: 6 passed, 1 failed   (1.5 s)
+   ✘ BurstContentionTest.lockWaitAndRetryBudget: 1 check(s) failed: retry amplification (attempts / requests) (actual: 1.57x (limit 1.10x))
+════════════════════════════════════════════════════════════════════════════════════════════════════

@@ -127,7 +127,7 @@ public final class TestRunner {
         StringBuilder sb = new StringBuilder();
         for (String key : List.of("db.lock.wait.timeout.ms", "cluster.nodes", "reservation.local.lock.enabled",
                 "retry.max.retries", "retry.backoff.ms", "retry.backoff.base.ms", "retry.backoff.max.ms",
-                "slot.bucket.minutes")) {
+                "slot.bucket.minutes", "reservation.locking.strategy")) {
             if (p.getProperty(key) != null) {
                 sb.append(key).append('=').append(p.getProperty(key).trim()).append("  ");
             }

@@ -1,0 +1,22 @@
+[build] OK  (36 main / 18 test sources)
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ Locking benchmark - strategies=[(current code)], 3 pods, overlap race x10, 20x burst on 6 hot + 10 cold slots x3 rounds
+ constraints: lock wait <= 50ms, retries <= 2 (max 3 attempts), amplification <= 1.10x
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+▶ strategy: (current code)
+   overlap race : 10 rounds x 3 partially overlapping requests on 3 pods -> rounds with a double booking=10, overlapping pairs=20
+   burst round 1: 201=16  409=114 503=0   500=0   | double bookings=2  | lock timeouts=0   max wait=  3.2 ms | retries=0   max attempts=1 amplification=1.00x | p50= 73.1 p99= 112.2 ms cold max= 104.3 ms
+   burst round 2: 201=17  409=113 503=0   500=0   | double bookings=5  | lock timeouts=0   max wait=  3.8 ms | retries=0   max attempts=1 amplification=1.00x | p50= 73.7 p99= 112.8 ms cold max= 101.9 ms
+   burst round 3: 201=16  409=114 503=0   500=0   | double bookings=3  | lock timeouts=0   max wait=  4.3 ms | retries=0   max attempts=1 amplification=1.00x | p50= 71.8 p99= 116.5 ms cold max= 126.6 ms
+   constraint checks:
+      (no constraint checks written yet - see checkConstraints)
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ strategy                   | dbl-books | 503 | 500 | lock t/o | max wait | max att |  ampl. |     p99 | cold max | verdict
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ (current code)             |        30 |   0 |   0 |        0 |   4.3 ms |       1 |  1.00x |  116 ms |   127 ms | n/a - no checks yet
+ counts (dbl-books, 503, 500, lock t/o) are summed over all rounds; max wait, max att, ampl., p99, cold max = worst round
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ RESULT: accepted=[]  rejected=[]  not checked=[(current code)]
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

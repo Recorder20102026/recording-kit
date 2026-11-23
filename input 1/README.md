@@ -20,7 +20,6 @@ PostgreSQL primary, one payment provider and one message broker.
 ```bash
 ./scripts/test.sh                      # all suites
 ./scripts/test.sh overlap burst        # selected suites
-./scripts/evaluate-designs.sh          # benchmark candidate locking designs (spikes)
 ./scripts/repro-race.sh                # one-shot reproduction of the cross-pod double booking
 ```
 
@@ -35,7 +34,7 @@ method, so you can Run/Debug it from the IntelliJ gutter. Use the project root a
 ```
 config/reservation.properties     runtime config (all pods read the same file)
 docs/                             incident report, architecture notes
-scripts/                          build / test / evaluation entry points
+scripts/                          build / test / race-repro entry points
 src/main/java/com/acme/reservations
   api/            HTTP adapter (ReservationController, HttpResponse)
   cluster/        Cluster = N ServiceNodes + shared Database / PaymentGateway / EventBus
@@ -50,6 +49,5 @@ src/main/java/com/acme/reservations
 src/test/java/com/acme/reservations
   suites/         the six test suites
   testkit/        zero-dependency runner, load generator, invariants, platform constraints
-  evaluation/     DesignEvaluation + spikes of candidate locking designs
   debug/          RaceReproMain
 ```

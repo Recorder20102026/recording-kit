@@ -36,6 +36,8 @@
 ## Action items
 
 * [ ] Root-cause the double bookings on the reservation path (owner: reservations team)
-* [ ] Choose and implement a locking strategy that satisfies C-1 .. C-6, record it as an ADR
+* [ ] Benchmark two candidate locking strategies, pessimistic vs optimistic/fenced, under C-1 .. C-5 and
+      implement the one that satisfies C-1 .. C-6. The platform team's reference patch (GitHub repo
+      `recording-kit`, folder `reference/`) has reusable locking blocks. Record the decision as an ADR.
 * [ ] Make the create path stop leaking side effects on rollback / retry (RES-318 was only done for cancel)
 * [ ] Prove it with the test suites in this repo before re-enabling the Saturday release

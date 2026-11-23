@@ -1,9 +1,0 @@
-[build] OK  (38 main / 24 test sources)
-alice -> node-a [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) HTTP 409 {"error":"SLOT_TAKEN","conflictsWith":"R-4dedc78d-8258-3469-945a-d8056428d1ef"}
-bob   -> node-b [2026-12-05T10:30:00Z .. 2026-12-05T11:30:00Z) HTTP 201 {"reservationId":"R-4dedc78d-8258-3469-945a-d8056428d1ef"}
-
-committed reservations on COURT-1:
-  R-4dedc78d-8258-3469-945a-d8056428d1ef   [2026-12-05T10:30:00Z .. 2026-12-05T11:30:00Z)  CONFIRMED  by node-b
-card holds at payment provider: 1
-
->>> no double booking
