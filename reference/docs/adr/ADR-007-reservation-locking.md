@@ -24,16 +24,16 @@ JVM-local locks are excluded by the multi-pod constraint, and a plain version co
 excluded by the partial-overlap constraint (the rival row does not exist when we read). Two DB-backed
 candidates were built from the platform reference patch and measured with the same harness.
 
-## Options measured (`./scripts/benchmark.sh pessimistic fenced`, 3 pods, 3 burst rounds each)
+## Options measured (`./scripts/benchmark.sh pessimistic fenced`, 3 pods, 10 race rounds + 3 burst rounds each)
 
-| Candidate | Double bookings | Lock-timeout aborts | Max lock wait | Max attempts | Amplification | Cold-slot max | Verdict |
+| Candidate | Double bookings | Lock-timeout aborts | Max lock wait | Max attempts | Amplification | p99 latency | Verdict |
 |---|---|---|---|---|---|---|---|
-| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~80-90 per round (~0.6-0.7 per request)** | ~50.3 ms | 2 | **~1.6-1.7x** | ~65 ms | rejected |
-| `fenced`: slot-bucket locks + version-guarded claim | 0 | 0 | ~20-40 ms | 1 | 1.00x | ~5-7 ms | **accepted** |
+| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~70-90 per round (~0.55-0.7 per request)** | ~50.3 ms | 2 | **~1.55-1.7x** | ~57-63 ms | rejected |
+| `fenced`: slot-bucket locks + version-guarded claim | 0 | 0 | ~10-40 ms | 1 | 1.00x | ~19-40 ms | **accepted** |
 
 * **pessimistic** is correct (the parent row always exists, and it lives in the shared DB), but every booking
-  of a court queues on one row, including cold slots nobody competes for. At 20x, 80-90 requests per round
-  wait the full 50 ms, get `55P03`, and retry: 1.7x amplification against a 1.10x budget. With
+  of a court queues on one row, including cold slots nobody competes for. At 20x, 70-90 requests per round
+  wait the full 50 ms, get `55P03`, and retry: up to 1.7x amplification against a 1.10x budget. With
   `reservation.locking.strategy=pessimistic`, `BurstContentionTest.lockWaitAndRetryBudget` fails for the same reason.
 * **fenced** locks only the 15-minute buckets the interval touches. Overlapping intervals always share a bucket,
   so they serialize; everything else runs in parallel, and no wait reaches the 50 ms budget.
@@ -48,8 +48,8 @@ candidates were built from the platform reference patch and measured with the sa
    rows; claim = `UPDATE ... WHERE version = :seen` (fencing token) (D2, D3).
 3. Reservation PK = `uuid(customer | Idempotency-Key)`, so replays on any pod return the original booking.
 4. Card hold and created event go through the transactional outbox (RES-318) (D4).
-5. `RetryPolicy`: retry only `55P03` / transient errors, max 2 retries (hard cap in code), full-jitter backoff
-   (2-20 ms), 503 + Retry-After when the budget is spent (D5).
+5. `RetryPolicy.execute`: retry only `55P03` / transient errors, never a 409 business conflict; max 2 retries
+   (`HARD_MAX_RETRIES`, a cap in code); full-jitter backoff (2-20 ms); 503 + Retry-After when the budget is spent (D5).
 6. JVM-local lock and the `resource.booking_count` UPDATE removed.
 
 `PessimisticResourceLock` stays behind the same `LockingStrategy` interface as a measured fallback.

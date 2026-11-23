@@ -1,28 +1,52 @@
 [build] OK  (40 main / 18 test sources)
-════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
- Locking benchmark - strategies=[fenced], 3 pods, overlap race x10, 20x burst on 6 hot + 10 cold slots x3 rounds
- constraints: lock wait <= 50ms, retries <= 2 (max 3 attempts), amplification <= 1.10x
-════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-▶ strategy: fenced
-   overlap race : 10 rounds x 3 partially overlapping requests on 3 pods -> rounds with a double booking=0, overlapping pairs=0
-   burst round 1: 201=13  409=117 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 19.0 ms | retries=0   max attempts=1 amplification=1.00x | p50=  8.2 p99=  21.0 ms cold max=   4.7 ms
-   burst round 2: 201=14  409=116 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 10.1 ms | retries=0   max attempts=1 amplification=1.00x | p50=  7.5 p99=  11.8 ms cold max=   4.3 ms
-   burst round 3: 201=13  409=117 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 15.3 ms | retries=0   max attempts=1 amplification=1.00x | p50=  8.2 p99=  17.4 ms cold max=   5.1 ms
-   constraint checks:
-      ✔ double bookings (overlap race + 20x burst)                     expected 0, got 0
-      ✔ 500 responses (exception leaked to the client)                 expected 0, got 0
-      ✔ 503 responses (retry budget exhausted)                         expected 0, got 0
-      ✔ max single lock wait                                           18.99ms (limit 52.00ms)
+▶ strategy: configured
+      ✔ overlap race: rounds with a double booking                     expected 0, got 0
+      ┌─ 20x burst, round 1
+      │ responses    201=14  200(replay)=0  409=116  4xx=0  503=0  500=0   conflict rate 89.2%
+      │ correctness  double bookings=0   unjustified 409s=0
+      │ side effects orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0
+      │ retries      attempts=130  retries=0  max attempts/request=1  amplification=1.00x
+      │ db locks     contended waits=112  lock timeouts=0  max wait=27.6 ms  p99 wait=27.4 ms
+      │ latency      p50=20.1 ms  p99=29.8 ms  max=29.9 ms   wall=34 ms
+      └─
+      ✔ double bookings                                                expected 0, got 0
+      ✔ HTTP 500 responses                                             expected 0, got 0
+      ✔ HTTP 503 responses                                             expected 0, got 0
+      ✔ max single lock wait                                           27.55 ms (limit 52.00 ms)
       ✔ lock_timeout aborts per request                                0.00 (limit 0.10)
       ✔ max attempts per request <= 3                                  got 1
-      ✔ retry amplification (attempts / requests)                      1.00x (limit 1.10x)
+      ✔ retry amplification                                            1.00x (limit 1.10x)
+      ┌─ 20x burst, round 2
+      │ responses    201=14  200(replay)=0  409=116  4xx=0  503=0  500=0   conflict rate 89.2%
+      │ correctness  double bookings=0   unjustified 409s=0
+      │ side effects orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0
+      │ retries      attempts=130  retries=0  max attempts/request=1  amplification=1.00x
+      │ db locks     contended waits=115  lock timeouts=0  max wait=26.1 ms  p99 wait=25.8 ms
+      │ latency      p50=20.7 ms  p99=28.2 ms  max=28.4 ms   wall=32 ms
+      └─
+      ✔ double bookings                                                expected 0, got 0
+      ✔ HTTP 500 responses                                             expected 0, got 0
+      ✔ HTTP 503 responses                                             expected 0, got 0
+      ✔ max single lock wait                                           26.11 ms (limit 52.00 ms)
+      ✔ lock_timeout aborts per request                                0.00 (limit 0.10)
+      ✔ max attempts per request <= 3                                  got 1
+      ✔ retry amplification                                            1.00x (limit 1.10x)
+      ┌─ 20x burst, round 3
+      │ responses    201=13  200(replay)=0  409=117  4xx=0  503=0  500=0   conflict rate 90.0%
+      │ correctness  double bookings=0   unjustified 409s=0
+      │ side effects orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0
+      │ retries      attempts=130  retries=0  max attempts/request=1  amplification=1.00x
+      │ db locks     contended waits=97  lock timeouts=0  max wait=27.8 ms  p99 wait=27.8 ms
+      │ latency      p50=8.7 ms  p99=30.2 ms  max=30.3 ms   wall=35 ms
+      └─
+      ✔ double bookings                                                expected 0, got 0
+      ✔ HTTP 500 responses                                             expected 0, got 0
+      ✔ HTTP 503 responses                                             expected 0, got 0
+      ✔ max single lock wait                                           27.85 ms (limit 52.00 ms)
+      ✔ lock_timeout aborts per request                                0.00 (limit 0.10)
+      ✔ max attempts per request <= 3                                  got 1
+      ✔ retry amplification                                            1.00x (limit 1.10x)
+   verdict: ACCEPT
 
-════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
- strategy                   | dbl-books | 503 | 500 | lock t/o | max wait | max att |  ampl. |     p99 | cold max | verdict
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- fenced                     |         0 |   0 |   0 |        0 |  19.0 ms |       1 |  1.00x |   21 ms |     5 ms | ACCEPT
- counts (dbl-books, 503, 500, lock t/o) are summed over all rounds; max wait, max att, ampl., p99, cold max = worst round
-════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
- RESULT: accepted=[fenced]  rejected=[]
-════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+RESULT: accepted=[configured]  rejected=[]

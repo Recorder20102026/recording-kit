@@ -3,15 +3,10 @@
 | Path | What it is |
 |---|---|
 | `input 1.zip`, `input 1/` | Brownfield multi-pod reservation service (baseline; reproduces overlapping-interval double bookings). |
-| `reference/` | Reference patch with every change: candidate locking structures (pessimistic resource lock, fenced slot buckets), bounded retry, service wiring and config, race/burst benchmark harness, ADR. |
+| `reference/` | Reference patch with the candidate locking structures: `LockingStrategy`, pessimistic resource lock, fenced slot buckets, `ReservationService`, ADR template. |
 | `recording-kit/` | Recording script (`TRANSCRIPT.md`) and expected outputs. |
 
-Quick start (JDK 21+, no Maven or Gradle):
+The race / 20x burst harness, the bounded retry wiring and the pod integration are written in the service
+itself, on top of its existing `testkit` (see `recording-kit/TRANSCRIPT.md`).
 
-```bash
-cd "input 1"
-./scripts/test.sh                                  # baseline: 17 passed, 10 failed
-patch -p1 < ../reference/reference.patch && chmod +x scripts/benchmark.sh
-./scripts/benchmark.sh pessimistic fenced          # accepted=[fenced] rejected=[pessimistic]
-./scripts/test.sh                                  # 27 passed, 0 failed
-```
+Requirements: JDK 21+, no Maven or Gradle (`./scripts/build.sh`, `./scripts/test.sh`).

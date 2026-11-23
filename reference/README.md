@@ -1,15 +1,20 @@
-# Reference patch: locking strategy for reservation-service
+# Reference patch: candidate locking structures for reservation-service
 
-Complete reference solution for overlapping-interval double bookings in a multi-pod reservation service
-whose database enforces `lock_timeout = 50ms` and whose platform allows at most 2 retries. It contains the
-final version of **every** changed file, at the same paths as in the service (`src/...`, `config/...`,
-`scripts/...`, `docs/...`). `reference.patch` is the same change as one diff against the baseline:
+Platform reference for overlapping-interval double bookings in a multi-pod service whose database enforces
+`lock_timeout = 50ms`. It holds the larger locking structures, at the same paths as in the service. The
+service-specific parts are **not** included and are written in the service itself:
+
+* the race / 20x burst harness, which extends the service's existing `testkit`;
+* the bounded retry wiring (`RetryPolicy`, `ReservationConfig`, `config/reservation.properties`);
+* the integration in `ServiceNode`, and the overlap predicate in `SlotAvailabilityChecker`.
+
+`reference.patch` is the same set of files as one diff against the baseline:
 
 ```bash
-patch -p1 < reference.patch && chmod +x scripts/benchmark.sh    # from the service root
+patch -p1 < reference.patch     # from the service root
 ```
 
-## Candidate locking structures
+## Files
 
 | File | Change | |
 |---|---|---|
@@ -18,35 +23,18 @@ patch -p1 < reference.patch && chmod +x scripts/benchmark.sh    # from the servi
 | `src/main/java/.../service/SlotBucketFence.java` | **Candidate 2 (fenced):** upsert + lock only the time buckets the interval touches, sorted, early stop; version-guarded claim (fencing token) | new |
 | `src/main/java/.../persistence/SlotBucket.java` | `slot_bucket` row: version (fencing token) + occupants | new |
 | `src/main/java/.../persistence/Schema.java` | `+ SLOT_BUCKETS` table | changed |
-| `src/main/java/.../service/RetryPolicy.java` | Bounded retry: only `55P03` / transient errors, hard cap 2 retries, full-jitter backoff, 503 + Retry-After on exhaustion | changed |
-| `src/main/java/.../service/ReservationService.java` | Create path driven by a `LockingStrategy`: idempotent id, lock-free fast path, strategy lease, conditional insert, outbox for side effects | changed |
-| `src/main/java/.../config/ReservationConfig.java` | New keys: `reservation.locking.strategy`, `retry.backoff.base.ms`, `retry.backoff.max.ms`, `retry.client.retry-after.ms`, `slot.bucket.minutes` | changed |
+| `src/main/java/.../service/ReservationService.java` | Create path driven by a `LockingStrategy`: idempotent id, lock-free fast path, strategy lease, conditional insert, outbox for side effects. Calls `retryPolicy.execute(attempt, onRetry)` | changed |
+| `docs/adr/ADR-007-reservation-locking.md` | Decision record template with the measured comparison | new |
 
-## Service integration and settings
+## Contract the service has to provide
 
-| File | Change | |
-|---|---|---|
-| `src/main/java/.../service/SlotAvailabilityChecker.java` | Overlap predicate → half-open `TimeInterval.overlaps` (catches left-partial and enclosing overlaps) | changed |
-| `src/main/java/.../cluster/ServiceNode.java` | Integration: each pod builds its `LockingStrategy` from `reservation.locking.strategy` (`pessimistic` / `fenced`) and passes it to `ReservationService` | changed |
-| `config/reservation.properties` | Timeout / retry wiring: JVM-local lock removed, `reservation.locking.strategy`, `retry.max.retries=2`, jittered backoff 2-20 ms, Retry-After 200 ms, 15-min buckets. The 50 ms `lock_timeout` stays `db.lock.wait.timeout.ms=50` | changed |
+`ReservationService` expects:
 
-## Benchmark harness
+* `RetryPolicy.execute(IntFunction<ReservationResult> attempt, Runnable onRetry)` returning a `ReservationResult`;
+* the constructor `(nodeName, db, reservations, resources, outbox, availability, LockingStrategy, RetryPolicy, metrics)`.
 
-| File | Change | |
-|---|---|---|
-| `src/test/java/.../testkit/LockingBenchmark.java` | Race / 20x burst harness: overlap race across pods + burst rounds; counters for double bookings, lock-wait timeouts, max wait, retries, attempts, amplification, latency; `checkConstraints` asserts the hard constraints | new |
-| `scripts/benchmark.sh` | `./scripts/benchmark.sh [strategy ...]` | new |
-| `docs/adr/ADR-007-reservation-locking.md` | Decision record with the measured comparison | new |
-
-## Choosing between the candidates
-
-Run both on the same workload and compare the counters against the constraints:
-
-```bash
-./scripts/benchmark.sh pessimistic fenced
-```
-
-Both keep their locks in the shared database, so both are multi-instance safe, and both always have a
-row to lock (the parent resource row, or an upserted bucket row), so both cover partial overlaps against
-rows that do not exist yet. They differ in lock granularity, which is what decides lock-wait timeouts and
-retry amplification under burst. The shipped `config/reservation.properties` selects `fenced`.
+`SlotBucketFence` takes the bucket size as a `Duration`. Both candidates keep their locks in the shared
+database, so both are multi-instance safe, and both always have a row to lock (the parent resource row, or an
+upserted bucket row), so both cover partial overlaps against rows that do not exist yet. They differ in lock
+granularity, which decides lock-wait timeouts and retry amplification under burst: measure both on the same
+workload before choosing.

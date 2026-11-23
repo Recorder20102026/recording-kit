@@ -60,9 +60,7 @@ public final class ReservationService {
         ReservationResult result = retryPolicy.execute(
                 attempt -> db.inTransaction("reservation.create",
                         tx -> createInTransaction(tx, request, reservationId, attempt)),
-                metrics::recordRetry,
-                (failure, attempts) -> new ReservationResult.Busy("LOCK_CONTENTION: " + failure.getMessage(),
-                        retryPolicy.retryAfter(), attempts));
+                metrics::recordRetry);
 
         metrics.recordCreate(result.attempts());
         return result;
