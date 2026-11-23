@@ -509,6 +509,163 @@
              outbox.enqueue(tx, OutboxMessage.Type.RELEASE_PAYMENT_HOLD, reservation.id(), reservation.resourceId(),
                      reservation.customerId(), reservation.amountCents(), reservation.paymentHoldKey());
              outbox.enqueue(tx, OutboxMessage.Type.RESERVATION_CANCELLED_EVENT, reservation.id(),
+--- a/src/main/java/com/acme/reservations/service/RetryPolicy.java
++++ b/src/main/java/com/acme/reservations/service/RetryPolicy.java
+@@ -1,32 +1,59 @@
+ package com.acme.reservations.service;
+ 
+ import com.acme.reservations.config.ReservationConfig;
++import com.acme.reservations.db.*;
++import com.acme.reservations.domain.ReservationResult;
+ import com.acme.reservations.support.Latency;
+ 
+ import java.time.Duration;
++import java.util.concurrent.ThreadLocalRandom;
++import java.util.function.IntFunction;
+ 
+-/** Retry settings for the reservation write path. */
++/** Bounded retry for the reservation write path (ADR-007). */
+ public final class RetryPolicy {
+ 
++    /** SRE retry budget: at most 2 retries, whatever reservation.properties says. */
++    public static final int HARD_MAX_RETRIES = 2;
++
+     private final int maxRetries;
+-    private final Duration backoff;
++    private final Duration baseBackoff;
++    private final Duration maxBackoff;
++    private final Duration clientRetryAfter;
+ 
+-    public RetryPolicy(int maxRetries, Duration backoff) {
+-        this.maxRetries = maxRetries;
+-        this.backoff = backoff;
++    public RetryPolicy(int maxRetries, Duration baseBackoff, Duration maxBackoff, Duration clientRetryAfter) {
++        this.maxRetries = Math.max(0, Math.min(maxRetries, HARD_MAX_RETRIES));
++        this.baseBackoff = baseBackoff;
++        this.maxBackoff = maxBackoff;
++        this.clientRetryAfter = clientRetryAfter;
+     }
+ 
+     public static RetryPolicy fromConfig(ReservationConfig config) {
+-        return new RetryPolicy(config.maxRetries(), config.retryBackoff());
++        return new RetryPolicy(config.maxRetries(), config.retryBackoffBase(), config.retryBackoffMax(),
++                config.clientRetryAfter());
+     }
+ 
+-    /** @param attemptsSoFar number of attempts already made (1 after the first failure) */
+-    public boolean shouldRetry(int attemptsSoFar) {
+-        return attemptsSoFar <= maxRetries;
++    /**
++     * Runs attempt 1, 2, 3. Only lock_timeout (55P03) and transient DB errors are retried. A 409 Conflict is a
++     * returned business answer, not an exception, so it is never retried: the slot will not get freer.
++     */
++    public ReservationResult execute(IntFunction<ReservationResult> attempt, Runnable onRetry) {
++        for (int n = 1; ; n++) {
++            try {
++                return attempt.apply(n);
++            } catch (LockWaitTimeoutException | TransientDbException e) {
++                if (n > maxRetries) {
++                    return new ReservationResult.Busy("LOCK_CONTENTION: " + e.getMessage(), clientRetryAfter, n);
++                }
++                onRetry.run();
++                backoff(n);
++            }
++        }
+     }
+ 
+-    public void backoff(int attemptsSoFar) {
+-        Latency.park(backoff);
++    /** Full jitter: sleep a random time in [0, min(max, base * 2^(n-1))], so contenders don't return in lock-step. */
++    private void backoff(int attemptsSoFar) {
++        long capMicros = Math.min(maxBackoff.toNanos() / 1_000, (baseBackoff.toNanos() / 1_000) << (attemptsSoFar - 1));
++        Latency.parkMicros(ThreadLocalRandom.current().nextLong(capMicros + 1));
+     }
+ 
+     public int maxRetries() {
+--- a/src/main/java/com/acme/reservations/config/ReservationConfig.java
++++ b/src/main/java/com/acme/reservations/config/ReservationConfig.java
+@@ -18,9 +18,12 @@
+                                 long paymentLatencyMaxMillis,
+                                 long eventBusLatencyMillis,
+                                 int clusterNodes,
+-                                boolean localLockEnabled,
+                                 int maxRetries,
+-                                Duration retryBackoff) {
++                                Duration retryBackoffBase,
++                                Duration retryBackoffMax,
++                                Duration clientRetryAfter,
++                                Duration slotBucketSize,
++                                String lockingStrategy) {
+ 
+     public static ReservationConfig load() {
+         Path path = Path.of(System.getProperty("reservation.config", "config/reservation.properties"));
+@@ -42,9 +45,14 @@
+                 longOf(p, "payment.latency.max.ms", 6),
+                 longOf(p, "eventbus.latency.ms", 1),
+                 (int) longOf(p, "cluster.nodes", 3),
+-                Boolean.parseBoolean(p.getProperty("reservation.local.lock.enabled", "true").trim()),
+-                (int) longOf(p, "retry.max.retries", 5),
+-                Duration.ofMillis(longOf(p, "retry.backoff.ms", 10)));
++                (int) longOf(p, "retry.max.retries", 2),
++                Duration.ofMillis(longOf(p, "retry.backoff.base.ms", 2)),
++                Duration.ofMillis(longOf(p, "retry.backoff.max.ms", 20)),
++                Duration.ofMillis(longOf(p, "retry.client.retry-after.ms", 200)),
++                Duration.ofMinutes(longOf(p, "slot.bucket.minutes", 15)),
++                // -Dreservation.locking.strategy=... overrides the file (used by scripts/benchmark.sh)
++                System.getProperty("reservation.locking.strategy",
++                        p.getProperty("reservation.locking.strategy", "fenced")).trim());
+     }
+ 
+     public DbConfig dbConfig() {
+--- /dev/null
++++ b/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java
+@@ -0,0 +1,46 @@
++package com.acme.reservations.testkit;
++
++import com.acme.reservations.cluster.Cluster;
++import com.acme.reservations.config.ReservationConfig;
++import com.acme.reservations.domain.CreateReservationRequest;
++
++import java.util.*;
++
++/** Race / 20x burst harness for candidate locking strategies: ./scripts/benchmark.sh pessimistic fenced */
++public final class LockingBenchmark {
++
++    static final int RACE_ROUNDS = 10;
++    static final int BURST_ROUNDS = 3;
++
++    private LockingBenchmark() {
++    }
++
++    public static void main(String[] args) {
++        List<String> strategies = args.length == 0 ? List.of("configured") : List.of(args);
++        List<String> accepted = new ArrayList<>();
++        List<String> rejected = new ArrayList<>();
++        for (String strategy : strategies) {
++            if (!strategy.equals("configured")) {
++                System.setProperty("reservation.locking.strategy", strategy);
++            }
++            ReservationConfig config = ReservationConfig.load();
++            System.out.println();
++            System.out.println("▶ strategy: " + strategy);
++            Verdict verdict = new Verdict();
++            overlapRace(config, verdict);
++            burst(config, verdict);
++            try {
++                verdict.assertAll();
++                accepted.add(strategy);
++                System.out.println("   verdict: ACCEPT");
++            } catch (AssertionError e) {
++                rejected.add(strategy);
++                System.out.println("   verdict: REJECT, " + e.getMessage().split(":")[0]);
++            }
++        }
++        System.out.println();
++        System.out.println("RESULT: accepted=" + accepted + "  rejected=" + rejected);
++    }
++
++    // Written in the service itself: overlapRace (cross-pod overlap race), burst (20x burst), checkConstraints.
++}
 --- /dev/null
 +++ b/docs/adr/ADR-007-reservation-locking.md
 @@ -0,0 +1,63 @@

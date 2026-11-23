@@ -12,26 +12,24 @@ Each step has three parts:
 ## What is pasted and what is typed
 
 **Pasted from the reference patch** (`https://github.com/Recorder20102026/recording-kit/tree/main/reference`):
-only the larger candidate locking structures, which the approved Starting input allows to be adapted:
-`SlotBucket`, `Schema`, `LockingStrategy`, `PessimisticResourceLock`, `SlotBucketFence`,
-`ReservationService`, and the `ADR-007` template.
+the larger blocks: the candidate locking structures `SlotBucket`, `Schema`, `LockingStrategy`,
+`PessimisticResourceLock`, `SlotBucketFence`, `ReservationService`; the bounded `RetryPolicy` and
+`ReservationConfig`; the `LockingBenchmark` skeleton (`main` only); and the `ADR-007` template.
 
-**Typed on camera (✍️ H1–H11)**: the race / 20x burst harness, built by extending the existing `testkit`
-classes, the bounded retry wiring, and the service integration:
+**Typed on camera (✍️ H1–H9)**: the workload and assertion parts of the race / 20x burst harness, built on
+the existing `testkit` classes, the retry and timeout values, and the service integration:
 
 | ✍️ | Step | File | What you type |
 |---|---|---|---|
 | H1 | 2.1 | `testkit/Fixtures.java` | `cluster(ReservationConfig, int)`: a cluster for any strategy (6 lines) |
 | H2 | 2.2 | `testkit/Workloads.java` | `OVERLAP_RACE` and `roundRobin`: requests spread over the pods (14 lines) |
 | H3 | 2.3 | `testkit/RunReport.java` | `lockTimeoutsPerRequest()` counter (5 lines) |
-| H4 | 2.4 | `testkit/LockingBenchmark.java` | new harness: `main`, the race round, the burst loop, `checkConstraints` (~85 lines) |
+| H4 | 2.4 | `testkit/LockingBenchmark.java` | into the pasted skeleton: `overlapRace`, `burst`, `checkConstraints` (~40 lines) |
 | H5 | 2.5 | `scripts/benchmark.sh` | copy of `test.sh`, 2 comment lines + 1 class name |
 | H6 | 3.1 | `service/SlotAvailabilityChecker.java` | half-open overlap predicate (4 lines) |
-| H7 | 3.4 | `service/RetryPolicy.java` | retry cap of 2, full jitter, 503 with Retry-After (~40 lines) |
-| H8 | 3.5 | `config/ReservationConfig.java` | new retry / strategy keys (14 lines) |
-| H9 | 3.6 | `cluster/ServiceNode.java` | strategy wiring per pod (8 lines) |
-| H10 | 3.7 | `config/reservation.properties` | timeout / retry settings (7 lines) |
-| H11 | 4.3 | `config/reservation.properties` | `pessimistic` → `fenced` (1 word) |
+| H7 | 3.4 | `cluster/ServiceNode.java` | strategy wiring per pod (8 lines) |
+| H8 | 3.5 | `config/reservation.properties` | retry cap, jitter window, Retry-After, strategy (7 lines) |
+| H9 | 4.3 | `config/reservation.properties` | `pessimistic` → `fenced` (1 word) |
 
 **Mouse techniques used below**
 
@@ -51,7 +49,7 @@ classes, the bounded retry wiring, and the service integration:
 * **Terminal**: click the **Terminal** icon in the tool window bar (bottom left), or menu
   **View ▸ Tool Windows ▸ Terminal**.
 
-Reference outputs from a real run are in `recording-kit/expected-output/`. Total running time is about 50 minutes.
+Reference outputs from a real run are in `recording-kit/expected-output/`. Total running time is about 35 minutes.
 
 ---
 
@@ -136,10 +134,11 @@ scroll `README.md`, then click `reference.patch` and scroll through the file lis
 **SAY**: "The platform team's reference patch has the larger locking structures: `LockingStrategy`, the
 interface; `PessimisticResourceLock`, a `SELECT FOR UPDATE` on the parent resource row; `SlotBucketFence`
 with `SlotBucket`, which locks only the time buckets an interval touches and claims them with a version
-guard; and a `ReservationService` driven by a `LockingStrategy`. I'll adapt those blocks. The reference
-says plainly what it does not contain: the benchmark harness, the retry wiring, and the integration into
-our pods. I'll write those three myself, starting with the harness, because I need numbers before I pick
-a design."
+guard; a `ReservationService` driven by a `LockingStrategy`; a bounded `RetryPolicy` with its
+`ReservationConfig` keys; and a `LockingBenchmark` skeleton that only has `main`. I'll adapt those blocks.
+The reference says plainly what it does not contain: the race and burst workloads and the constraint
+assertions of the harness, the retry and timeout values for our service, and the integration into our pods.
+I'll write those myself, starting with the harness, because I need numbers before I pick a design."
 
 **SAY**: "Both candidates keep their locks in the database, so both survive multiple pods. Neither one
 relies on a version counter alone: a version counter on reservation rows can't protect a partial overlap,
@@ -148,7 +147,7 @@ and lock granularity decides lock-wait timeouts and retry amplification. I'll me
 
 ---
 
-## PHASE 2: Build the race / 20x burst harness by extending the testkit (≈ 15 min)
+## PHASE 2: Build the race / 20x burst harness by extending the testkit (≈ 10 min)
 
 ### 2.1 ✍️ H1: `Fixtures.cluster(ReservationConfig, int)`
 **DO**: Double-click `testkit/Fixtures.java`. In the gutter, drag from line **34** to line **38** (the method
@@ -214,64 +213,23 @@ I need for the 50 millisecond rule: lock-timeout aborts per request. Every `lock
 one more attempt, so with an amplification budget of 1.10x, at most 0.10 aborts per request are affordable."
 
 ### 2.4 ✍️ H4: the harness, `LockingBenchmark`
-**DO**: Right-click the `testkit` package under `src/test/java` ▸ **New ▸ Java Class** → type
-`LockingBenchmark` → double-click **Class**. IntelliJ opens `LockingBenchmark.java` with the `package` line
-and an empty `public class LockingBenchmark {` … `}`. In the gutter, drag from the `public class` line to the
-last `}` and type the four parts below, one after another.
+**DO**: Chrome → `reference/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java` → click
+**Copy raw file**. IntelliJ → right-click the `testkit` package under `src/test/java` ▸ **Paste**. IntelliJ
+creates `LockingBenchmark.java`. Scroll to line **45**,
+`// Written in the service itself: overlapRace (cross-pod overlap race), burst (20x burst), checkConstraints.`
 
-**Part A: imports and `main`**
-```java
-import com.acme.reservations.cluster.Cluster;
-import com.acme.reservations.config.ReservationConfig;
-import com.acme.reservations.domain.CreateReservationRequest;
+**SAY**: "The reference skeleton `LockingBenchmark` only has `main`. `main` takes strategy names, for example
+`pessimistic fenced`, sets the system property `reservation.locking.strategy` for each one and loads a fresh
+`ReservationConfig`; with no names, `main` runs whatever `reservation.properties` configures, which today is
+the baseline. Each strategy gets its own `Verdict`, the soft-assertion class from our testkit: every check is
+printed, and `assertAll` decides ACCEPT or REJECT. `main` calls `overlapRace` and `burst`, which don't exist
+yet: the workloads and the assertions are specific to our service, so I write them."
 
-import java.util.*;
-
-/** Race / 20x burst harness for candidate locking strategies: ./scripts/benchmark.sh pessimistic fenced */
-public final class LockingBenchmark {
-
-    static final int RACE_ROUNDS = 10;
-    static final int BURST_ROUNDS = 3;
-
-    private LockingBenchmark() {
-    }
-
-    public static void main(String[] args) {
-        List<String> strategies = args.length == 0 ? List.of("configured") : List.of(args);
-        List<String> accepted = new ArrayList<>();
-        List<String> rejected = new ArrayList<>();
-        for (String strategy : strategies) {
-            if (!strategy.equals("configured")) {
-                System.setProperty("reservation.locking.strategy", strategy);
-            }
-            ReservationConfig config = ReservationConfig.load();
-            System.out.println();
-            System.out.println("▶ strategy: " + strategy);
-            Verdict verdict = new Verdict();
-            overlapRace(config, verdict);
-            burst(config, verdict);
-            try {
-                verdict.assertAll();
-                accepted.add(strategy);
-                System.out.println("   verdict: ACCEPT");
-            } catch (AssertionError e) {
-                rejected.add(strategy);
-                System.out.println("   verdict: REJECT, " + e.getMessage().split(":")[0]);
-            }
-        }
-        System.out.println();
-        System.out.println("RESULT: accepted=" + accepted + "  rejected=" + rejected);
-    }
-```
-**SAY**: "`LockingBenchmark.main` takes strategy names, for example `pessimistic fenced`, and runs the same
-workload for each. For each strategy name, `main` sets the system property `reservation.locking.strategy`
-and loads a fresh `ReservationConfig`; with no names, `main` runs whatever `reservation.properties`
-configures, which today is the baseline. Each strategy gets its own `Verdict`, the soft-assertion class from
-the testkit: every check is printed, and `assertAll` decides ACCEPT or REJECT at the end."
+**DO**: In the gutter, click line number **45** (the `// Written in the service itself…` comment) to select
+the line, then type parts B, C and D below one after another, and press Return after the last line.
 
 **Part B: the race round**
 ```java
-
     /** Three partially overlapping requests at the same instant, one per pod, RACE_ROUNDS times. */
     static void overlapRace(ReservationConfig config, Verdict verdict) {
         int roundsWithDoubleBooking = 0;
@@ -332,7 +290,6 @@ asserts them, so each of the three rounds has to pass on its own."
                         r.maxAttemptsPerRequest() <= Constraints.MAX_ATTEMPTS, "got " + r.maxAttemptsPerRequest())
                 .atMost("retry amplification", Constraints.MAX_RETRY_AMPLIFICATION, r.retryAmplification(), "x");
     }
-}
 ```
 **SAY**, one sentence per assertion:
 * "`double bookings` must be 0: the correctness rule, checked on committed rows."
@@ -383,7 +340,7 @@ checks, all double bookings. That's the baseline the two candidates have to beat
 
 ---
 
-## PHASE 3: Implement both candidate locking designs (≈ 17 min)
+## PHASE 3: Implement both candidate locking designs (≈ 10 min)
 
 ### 3.1 ✍️ H6: fix the overlap predicate (shared by both candidates)
 **DO**: Double-click `service/SlotAvailabilityChecker.java`. In the gutter, drag from line **25**
@@ -409,6 +366,8 @@ file** → in IntelliJ:
 | `service/PessimisticResourceLock.java` | right-click package `service` ▸ **Paste** (new) |
 | `service/SlotBucketFence.java` | right-click package `service` ▸ **Paste** (new) |
 | `service/ReservationService.java` | double-click `ReservationService.java` ▸ **Edit ▸ Select All** ▸ **Edit ▸ Paste** (replace) |
+| `service/RetryPolicy.java` | double-click `RetryPolicy.java` ▸ **Edit ▸ Select All** ▸ **Edit ▸ Paste** (replace) |
+| `config/ReservationConfig.java` | double-click `ReservationConfig.java` ▸ **Edit ▸ Select All** ▸ **Edit ▸ Paste** (replace) |
 
 **SAY** while pasting `PessimisticResourceLock`: "Candidate one, `PessimisticResourceLock.acquire`, calls
 `resources.lockById`, a `SELECT FOR UPDATE` on the parent resource row, and then re-runs `findConflict`
@@ -425,83 +384,9 @@ version = :seen` on every bucket, so a moved fencing token aborts the transactio
 which candidate runs: `locking.acquire` takes the locks, `lease.clash` is the authoritative overlap check,
 and `lease.claim` runs after the conditional insert. The reservation id comes from the Idempotency-Key, and
 the card hold and the event go into the outbox in the same transaction, so a rollback leaves nothing behind.
-`createReservation` hands each attempt to `retryPolicy.execute`, which our `RetryPolicy` doesn't have yet."
+`createReservation` hands each attempt to `retryPolicy.execute`."
 
-### 3.3 Build: the two integration points show up
-**DO**:
-```bash
-./scripts/build.sh
-```
-**EXPECT** (`expected-output/3a-build-after-paste.txt`): `2 errors`:
-* `ServiceNode.java:31: error: constructor ReservationService in class ReservationService cannot be applied to given types`
-* `ReservationService.java:60: error: cannot find symbol … method execute`
-
-**SAY**: "Two compile errors, and both are mine to write. `ReservationService.java` line 60 calls
-`retryPolicy.execute`, the bounded retry. `ServiceNode.java` line 31 has to pass a `LockingStrategy` into the
-new `ReservationService` constructor. Retry wiring first."
-
-### 3.4 ✍️ H7: bounded retry in `RetryPolicy`
-**DO**: Double-click `service/RetryPolicy.java`. In the gutter, drag from line **8**
-(`/** Retry settings for the reservation write path. */`) to line **30** (the `}` that closes `backoff`) and type:
-```java
-/** Bounded retry for the reservation write path (ADR-007). */
-public final class RetryPolicy {
-
-    /** SRE retry budget: at most 2 retries, whatever reservation.properties says. */
-    public static final int HARD_MAX_RETRIES = 2;
-
-    private final int maxRetries;
-    private final Duration baseBackoff;
-    private final Duration maxBackoff;
-    private final Duration clientRetryAfter;
-
-    public RetryPolicy(int maxRetries, Duration baseBackoff, Duration maxBackoff, Duration clientRetryAfter) {
-        this.maxRetries = Math.max(0, Math.min(maxRetries, HARD_MAX_RETRIES));
-        this.baseBackoff = baseBackoff;
-        this.maxBackoff = maxBackoff;
-        this.clientRetryAfter = clientRetryAfter;
-    }
-
-    public static RetryPolicy fromConfig(ReservationConfig config) {
-        return new RetryPolicy(config.maxRetries(), config.retryBackoffBase(), config.retryBackoffMax(),
-                config.clientRetryAfter());
-    }
-
-    /**
-     * Runs attempt 1, 2, 3. Only lock_timeout (55P03) and transient DB errors are retried. A 409 Conflict is a
-     * returned business answer, not an exception, so it is never retried: the slot will not get freer.
-     */
-    public ReservationResult execute(IntFunction<ReservationResult> attempt, Runnable onRetry) {
-        for (int n = 1; ; n++) {
-            try {
-                return attempt.apply(n);
-            } catch (LockWaitTimeoutException | TransientDbException e) {
-                if (n > maxRetries) {
-                    return new ReservationResult.Busy("LOCK_CONTENTION: " + e.getMessage(), clientRetryAfter, n);
-                }
-                onRetry.run();
-                backoff(n);
-            }
-        }
-    }
-
-    /** Full jitter: sleep a random time in [0, min(max, base * 2^(n-1))], so contenders don't return in lock-step. */
-    private void backoff(int attemptsSoFar) {
-        long capMicros = Math.min(maxBackoff.toNanos() / 1_000, (baseBackoff.toNanos() / 1_000) << (attemptsSoFar - 1));
-        Latency.parkMicros(ThreadLocalRandom.current().nextLong(capMicros + 1));
-    }
-```
-Then click at the end of line **3** (`import com.acme.reservations.config.ReservationConfig;`), press Return and type:
-```java
-import com.acme.reservations.db.*;
-import com.acme.reservations.domain.ReservationResult;
-```
-And click at the end of the line `import java.time.Duration;`, press Return and type:
-```java
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.IntFunction;
-```
-**SAY**, while typing:
+**SAY** while pasting `RetryPolicy`, with the editor on `HARD_MAX_RETRIES` and `execute`:
 * "`HARD_MAX_RETRIES = 2` is the SRE budget, and the constructor clamps `maxRetries` with
   `Math.min(maxRetries, HARD_MAX_RETRIES)`. The baseline read `retry.max.retries=5` straight from config;
   now a config typo can't create a retry storm."
@@ -510,43 +395,28 @@ import java.util.function.IntFunction;
   conflict is a returned business answer, not an exception: another customer owns the slot, and asking
   again in 10 milliseconds can't change that. Retrying a conflict would only add load to the primary
   during exactly the burst we're trying to survive."
-* "When attempt `n` fails and `n > maxRetries`, `execute` returns `ReservationResult.Busy` with
-  `clientRetryAfter`. `HttpResponse` turns `Busy` into HTTP 503 with `retryAfterMs`, so the client gets a
-  real answer and a time to come back, instead of the HTTP 500 the baseline leaked."
+* "When the budget is spent, `execute` returns `ReservationResult.Busy` with `clientRetryAfter`, and
+  `HttpResponse` turns `Busy` into HTTP 503 with `retryAfterMs`, instead of the HTTP 500 the baseline leaked."
 * "`backoff` uses full jitter: a uniform random sleep between zero and `base * 2^(n-1)`, capped at
-  `maxBackoff`. The baseline slept a fixed 10 milliseconds, so every loser came back at the same instant
-  and collided again. With a 2 millisecond base and a 20 millisecond cap, the retries spread out."
+  `maxBackoff`. The baseline slept a fixed 10 milliseconds, so every loser came back at the same instant."
 
-### 3.5 ✍️ H8: new keys in `ReservationConfig`
-**DO**: Double-click `config/ReservationConfig.java`. First, in the gutter, drag from line **45**
-(`Boolean.parseBoolean(p.getProperty("reservation.local.lock.enabled"…`) to line **47**
-(`Duration.ofMillis(longOf(p, "retry.backoff.ms", 10)));`) and type:
-```java
-                (int) longOf(p, "retry.max.retries", 2),
-                Duration.ofMillis(longOf(p, "retry.backoff.base.ms", 2)),
-                Duration.ofMillis(longOf(p, "retry.backoff.max.ms", 20)),
-                Duration.ofMillis(longOf(p, "retry.client.retry-after.ms", 200)),
-                Duration.ofMinutes(longOf(p, "slot.bucket.minutes", 15)),
-                // -Dreservation.locking.strategy=... overrides the file (used by scripts/benchmark.sh)
-                System.getProperty("reservation.locking.strategy",
-                        p.getProperty("reservation.locking.strategy", "fenced")).trim());
-```
-Then drag from line **21** (`boolean localLockEnabled,`) to line **23** (`Duration retryBackoff) {`) and type:
-```java
-                                int maxRetries,
-                                Duration retryBackoffBase,
-                                Duration retryBackoffMax,
-                                Duration clientRetryAfter,
-                                Duration slotBucketSize,
-                                String lockingStrategy) {
-```
-**SAY**: "`ReservationConfig` loses `localLockEnabled`, because the JVM-local lock is gone. The default for
-`retry.max.retries` drops from 5 to 2. `retryBackoffBase` and `retryBackoffMax` feed the jitter,
-`clientRetryAfter` is the Retry-After on the 503, `slotBucketSize` is the bucket length for `SlotBucketFence`,
-and `lockingStrategy` reads `reservation.locking.strategy`. The system property wins over the file, which
-is how `LockingBenchmark` switches strategy between runs."
+**SAY** while pasting `ReservationConfig`: "`ReservationConfig` drops `localLockEnabled` and adds
+`retryBackoffBase`, `retryBackoffMax`, `clientRetryAfter`, `slotBucketSize` and `lockingStrategy`. The system
+property `reservation.locking.strategy` wins over the file, which is how `LockingBenchmark` switches strategy."
 
-### 3.6 ✍️ H9: integration in `ServiceNode`
+### 3.3 Build: the integration point shows up
+**DO**:
+```bash
+./scripts/build.sh
+```
+**EXPECT** (`expected-output/3a-build-after-paste.txt`): `1 error`:
+`ServiceNode.java:31: error: constructor ReservationService in class ReservationService cannot be applied to given types`,
+with `required: ... SlotAvailabilityChecker,LockingStrategy,RetryPolicy,ServiceMetrics`.
+
+**SAY**: "One compile error, in `ServiceNode` line 31: the new `ReservationService` constructor needs a
+`LockingStrategy`. Wiring the strategy into each pod is the service-specific integration I write by hand."
+
+### 3.4 ✍️ H7: integration in `ServiceNode`
 **DO**: Double-click `cluster/ServiceNode.java`. In the gutter, drag from line **31**
 (`this.service = new ReservationService(…`) to line **33** (`RetryPolicy.fromConfig(config), config, metrics);`) and type:
 ```java
@@ -566,7 +436,7 @@ gives `PessimisticResourceLock`, `fenced` gives `SlotBucketFence` with the confi
 unknown value fails at startup instead of silently running without locks. `ReservationService` no longer
 receives the payment gateway or the event bus; the outbox relay delivers those after COMMIT."
 
-### 3.7 ✍️ H10: timeout / retry settings in `reservation.properties`
+### 3.5 ✍️ H8: retry and timeout values in `reservation.properties`
 **DO**: Double-click `config/reservation.properties`. In the gutter, drag from line **21**
 (`# --- Reservation path ---…`) to line **27** (`retry.backoff.ms=10`, the end of the file) and type:
 ```properties
@@ -578,13 +448,14 @@ retry.backoff.base.ms=2
 retry.backoff.max.ms=20
 retry.client.retry-after.ms=200
 ```
-**SAY**: "`reservation.local.lock.enabled` is gone, because a JVM lock can't coordinate pods.
-`retry.max.retries` goes from 5 to 2, the SRE budget. `retry.backoff.base.ms=2` and `retry.backoff.max.ms=20`
+**SAY**: "These values are the retry wiring for our service. `reservation.local.lock.enabled` is gone,
+because a JVM lock can't coordinate pods. `retry.max.retries` goes from 5 to 2, the SRE budget, and
+`RetryPolicy.HARD_MAX_RETRIES` would clamp anything higher. `retry.backoff.base.ms=2` and `retry.backoff.max.ms=20`
 set the jitter window, so a request that uses both retries still answers in about 160 milliseconds.
 `retry.client.retry-after.ms=200` is the Retry-After for the 503. The lock wait itself stays at
 `db.lock.wait.timeout.ms=50`. I start with `reservation.locking.strategy=pessimistic`, the simpler candidate."
 
-### 3.8 Build and run both candidates
+### 3.6 Build and run both candidates
 **DO**:
 ```bash
 ./scripts/benchmark.sh pessimistic fenced | tee reports/candidates-benchmark.txt
@@ -630,7 +501,7 @@ amplification ≈ 1.5–1.6x (`expected-output/3b-pessimistic-burst-timeout-test
 And `stalledHolderBoundedWaiter` already passes with my `RetryPolicy`: three attempts, then HTTP 503 with a
 200 millisecond Retry-After."
 
-### 4.3 ✍️ H11: finalize the winner
+### 4.3 ✍️ H9: finalize the winner
 **DO**: In `config/reservation.properties` double-click the word `pessimistic` on line 22 and type `fenced`:
 ```properties
 reservation.locking.strategy=fenced
@@ -668,12 +539,13 @@ side effects. And `benchmark.sh` with no arguments runs the configured strategy 
 **DO**: Right-click the project root `input 1` in the Project tool window ▸ **Local History ▸ Show History**.
 Click through the entries. Then expand `reports/`.
 
-**SAY**: "From the reference patch I adapted the locking structures: `LockingStrategy`,
+**SAY**: "From the reference patch I adapted the locking structures `LockingStrategy`,
 `PessimisticResourceLock`, `SlotBucketFence`, `SlotBucket`, the `Schema` change and the new
-`ReservationService`. I wrote the harness on top of the existing testkit: `Fixtures.cluster` with an explicit
-config, `Workloads.OVERLAP_RACE` and `roundRobin`, `RunReport.lockTimeoutsPerRequest`, and `LockingBenchmark`
-with the race round, the burst loop and `checkConstraints`. I wrote the retry wiring in `RetryPolicy`,
-`ReservationConfig` and `reservation.properties`, the strategy wiring in `ServiceNode`, and the predicate fix
+`ReservationService`, plus the bounded `RetryPolicy`, `ReservationConfig` and the `LockingBenchmark` skeleton.
+I wrote the harness workloads on top of the existing testkit: `Fixtures.cluster` with an explicit config,
+`Workloads.OVERLAP_RACE` and `roundRobin`, `RunReport.lockTimeoutsPerRequest`, and in `LockingBenchmark` the
+race round `overlapRace`, the burst loop `burst` and the assertions in `checkConstraints`. I wrote the retry
+and timeout values in `reservation.properties`, the strategy wiring in `ServiceNode`, and the predicate fix
 in `SlotAvailabilityChecker`. The `reports/` folder holds the baseline, both candidates side by side, and the
 final verification."
 

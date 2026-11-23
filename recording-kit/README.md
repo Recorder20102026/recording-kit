@@ -4,24 +4,23 @@
 |---|---|
 | `../input 1.zip` | Baseline project (bugs included). Extract it fresh before every take. |
 | `../input 1/` | The same baseline, browsable on GitHub. |
-| `../reference/` | **Reference GitHub patch** shown on camera: the candidate locking structures only (see `reference/README.md`). |
-| `TRANSCRIPT.md` | Step-by-step script: **DO** (mouse actions) / **SAY** / **EXPECT**, with the ✍️ H1–H11 code you type by hand. |
+| `../reference/` | **Reference GitHub patch** shown on camera: locking structures, `RetryPolicy`, `ReservationConfig`, `LockingBenchmark` skeleton (see `reference/README.md`). |
+| `TRANSCRIPT.md` | Step-by-step script: **DO** (mouse actions) / **SAY** / **EXPECT**, with the ✍️ H1–H9 code you type by hand. |
 | `expected-output/` | Real outputs from a dry run of every phase. |
 
 ## Pasted vs. typed
 
 * **Pasted from `reference/`** (Chrome **Copy raw file** → IntelliJ right-click package ▸ **Paste**, or
   **Edit ▸ Select All** + **Edit ▸ Paste** to replace): `SlotBucket`, `Schema`, `LockingStrategy`,
-  `PessimisticResourceLock`, `SlotBucketFence`, `ReservationService`, `ADR-007`. These are the larger
-  candidate blocks the Starting input says are adapted.
+  `PessimisticResourceLock`, `SlotBucketFence`, `ReservationService`, `RetryPolicy`, `ReservationConfig`,
+  the `LockingBenchmark` skeleton (`main` only) and `ADR-007`.
 * **Typed on camera** (✍️, exact text in `TRANSCRIPT.md`):
   * **Harness**, extending the existing testkit: `Fixtures.cluster(ReservationConfig, int)` (H1),
-    `Workloads.OVERLAP_RACE` + `roundRobin` (H2), `RunReport.lockTimeoutsPerRequest` (H3), the new
-    `LockingBenchmark` with `main`, the race round, the burst loop and `checkConstraints` (H4), and
-    `benchmark.sh` copied from `test.sh` (H5).
-  * **Candidates and retry wiring**: overlap predicate (H6), `RetryPolicy` with the cap of 2, full jitter and
-    the 503 with Retry-After (H7), `ReservationConfig` keys (H8), `ServiceNode` strategy wiring (H9),
-    `reservation.properties` (H10), and `pessimistic` → `fenced` (H11).
+    `Workloads.OVERLAP_RACE` + `roundRobin` (H2), `RunReport.lockTimeoutsPerRequest` (H3), and in the pasted
+    `LockingBenchmark` skeleton the race round `overlapRace`, the burst loop `burst` and `checkConstraints`
+    (H4, ~40 lines), plus `benchmark.sh` copied from `test.sh` (H5).
+  * **Integration and values**: overlap predicate (H6), `ServiceNode` strategy wiring (H7), retry / timeout
+    values in `reservation.properties` (H8), and `pessimistic` → `fenced` (H9).
 * Every typed step was replayed against the baseline and produces a project that builds and passes.
 
 ## Pre-flight checklist (before you hit record)
@@ -42,8 +41,8 @@
 |---|---|---|
 | 1.5 | `./scripts/test.sh` | **17 passed, 10 failed** (same 10 every run) |
 | 2.6 | `./scripts/benchmark.sh` | `configured` (baseline): race 10/10 rounds double book, every burst round double books; **REJECT, 4 check(s) failed** |
-| 3.3 | `./scripts/build.sh` after pasting | **2 errors**: `ServiceNode.java:31` (constructor) and `ReservationService.java:60` (`retryPolicy.execute`) |
-| 3.8 | `./scripts/benchmark.sh pessimistic fenced` | `pessimistic` **REJECT, 6 check(s) failed** (70–92 lock timeouts/round, 1.55–1.71x); `fenced` **ACCEPT** |
+| 3.3 | `./scripts/build.sh` after pasting | **1 error** in `ServiceNode.java:31` (constructor needs a `LockingStrategy`) |
+| 3.6 | `./scripts/benchmark.sh pessimistic fenced` | `pessimistic` **REJECT, 6 check(s) failed** (70–92 lock timeouts/round, 1.55–1.71x); `fenced` **ACCEPT** |
 | 4.2 | `./scripts/test.sh burst timeout` (pessimistic) | 6 passed, 1 failed (`lockWaitAndRetryBudget`) |
 | 4.5 | `./scripts/test.sh` + `./scripts/benchmark.sh` (fenced) | **27 passed, 0 failed**; `verdict: ACCEPT` |
 
