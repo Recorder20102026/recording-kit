@@ -1,6 +1,6 @@
 [build] OK  (36 main / 17 test sources)
 ════════════════════════════════════════════════════════════════════════════════════════════════════
- reservation-service test run  2026-11-23T06:45:40  suites=[OverlappingIntervalTest, BurstContentionTest, MultiNodeConsistencyTest, PartialFailureTest, LockTimeoutRetryTest, RegressionTest]
+ reservation-service test run  2026-11-23T08:14:16  suites=[OverlappingIntervalTest, BurstContentionTest, MultiNodeConsistencyTest, PartialFailureTest, LockTimeoutRetryTest, RegressionTest]
  config/reservation.properties: db.lock.wait.timeout.ms=50  cluster.nodes=3  reservation.local.lock.enabled=true  retry.max.retries=5  retry.backoff.ms=10
  constraints: lock wait <= 50ms, retries <= 2, burst = 20x, nodes = 3, amplification <= 1.10x
 ════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -10,7 +10,7 @@
       ✔ existing booking [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) created expected 201, got 201
       ✔ second request [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) -> HTTP expected 409, got 409
       ✔ double bookings in DB                                          expected 0, got 0
-   [PASS] identicalIntervalRejected (43 ms)
+   [PASS] identicalIntervalRejected (40 ms)
 
    ● containedIntervalRejected - contained interval      [10:15-10:45) is rejected
       ✔ existing booking [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) created expected 201, got 201
@@ -22,59 +22,59 @@
       ✔ existing booking [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) created expected 201, got 201
       ✔ second request [2026-12-05T10:30:00Z .. 2026-12-05T11:30:00Z) -> HTTP expected 409, got 409
       ✔ double bookings in DB                                          expected 0, got 0
-   [PASS] rightPartialOverlapRejected (11 ms)
+   [PASS] rightPartialOverlapRejected (12 ms)
 
    ● leftPartialOverlapRejected - left partial overlap    [09:30-10:30) is rejected
       ✔ existing booking [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) created expected 201, got 201
       ✘ second request [2026-12-05T09:30:00Z .. 2026-12-05T10:30:00Z) -> HTTP expected 409, got 201
       ✘ double bookings in DB                                          expected 0, got 1
-   [FAIL] leftPartialOverlapRejected (25 ms)
+   [FAIL] leftPartialOverlapRejected (19 ms)
 
    ● enclosingIntervalRejected - enclosing interval      [09:00-12:00) is rejected
       ✔ existing booking [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) created expected 201, got 201
       ✘ second request [2026-12-05T09:00:00Z .. 2026-12-05T12:00:00Z) -> HTTP expected 409, got 201
       ✘ double bookings in DB                                          expected 0, got 1
-   [FAIL] enclosingIntervalRejected (22 ms)
+   [FAIL] enclosingIntervalRejected (19 ms)
 
    ● adjacentIntervalsAllowed - touching intervals [09:00-10:00) and [11:00-12:00) are allowed (half-open)
       ✔ existing booking created                                       expected 201, got 201
       ✔ [09:00-10:00) booked                                           expected 201, got 201
       ✔ [11:00-12:00) booked                                           expected 201, got 201
       ✔ double bookings                                                expected 0, got 0
-   [PASS] adjacentIntervalsAllowed (36 ms)
+   [PASS] adjacentIntervalsAllowed (34 ms)
 
    ● concurrentPartialOverlapsAcrossNodes - concurrent partial overlaps on different pods: exactly one wins (10 rounds)
       ✘ rounds that ended with a double booking                        expected 0, got 10
-   [FAIL] concurrentPartialOverlapsAcrossNodes (137 ms)
+   [FAIL] concurrentPartialOverlapsAcrossNodes (114 ms)
 
 
 ▶ BurstContentionTest
    ● noDoubleBookings - no two confirmed reservations overlap after the burst
-      (JIT warm-up: 2 discarded burst runs, 277 ms)
+      (JIT warm-up: 2 discarded burst runs, 236 ms)
       ┌─ hot-slot burst: 130 requests, 3 pods, 20x on 6 hot slots + 10 cold slots
       │ responses    201=16  200(replay)=0  409=114  4xx=0  503=0  500=0   conflict rate 87.7%
       │ correctness  double bookings=3   unjustified 409s=0
       │ side effects orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0
       │ retries      attempts=130  retries=0  max attempts/request=1  amplification=1.00x
-      │ db locks     contended waits=4  lock timeouts=0  max wait=4.1 ms  p99 wait=4.1 ms
-      │ latency      p50=60.4 ms  p99=105.8 ms  max=107.2 ms   wall=110 ms
+      │ db locks     contended waits=5  lock timeouts=0  max wait=2.4 ms  p99 wait=2.4 ms
+      │ latency      p50=53.5 ms  p99=98.2 ms  max=99.4 ms   wall=101 ms
       └─
       booked per hot slot: 09:00-10:00=1  09:30-10:30=0  10:00-11:00=1  10:45-11:15=1  11:00-12:00=1  13:00-14:00=2  
-        overlap: R-c402dac2-06ed-4bcf-9855-7ebc38f1132b [2026-12-05T13:00:00Z .. 2026-12-05T14:00:00Z) <-> R-08c80a1e-7a46-43e3-b6a9-be83100554c4 [2026-12-05T13:00:00Z .. 2026-12-05T14:00:00Z)
-        overlap: R-d11aa8b3-94a8-432d-996d-6012eaaa91f9 [2026-12-05T11:00:00Z .. 2026-12-05T12:00:00Z) <-> R-26b47da6-b2df-4044-8e84-e86f7403f59a [2026-12-05T10:45:00Z .. 2026-12-05T11:15:00Z)
-        overlap: R-1208f1bb-fe0a-4e81-bd0f-ea10eac11a4e [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) <-> R-26b47da6-b2df-4044-8e84-e86f7403f59a [2026-12-05T10:45:00Z .. 2026-12-05T11:15:00Z)
+        overlap: R-c6f81024-adff-47ee-b9b3-51c42adab808 [2026-12-05T10:00:00Z .. 2026-12-05T11:00:00Z) <-> R-b172605f-242d-4b10-b068-9cbe7a2489a7 [2026-12-05T10:45:00Z .. 2026-12-05T11:15:00Z)
+        overlap: R-12cebac8-03b8-41ba-8617-6acadc27ae5d [2026-12-05T13:00:00Z .. 2026-12-05T14:00:00Z) <-> R-57c24b2e-2003-42e8-b50b-0f91639334d8 [2026-12-05T13:00:00Z .. 2026-12-05T14:00:00Z)
+        overlap: R-b172605f-242d-4b10-b068-9cbe7a2489a7 [2026-12-05T10:45:00Z .. 2026-12-05T11:15:00Z) <-> R-5dd0184b-099e-41a6-886f-6f187c03c762 [2026-12-05T11:00:00Z .. 2026-12-05T12:00:00Z)
       ✘ overlapping confirmed reservation pairs                        expected 0, got 3
-   [FAIL] noDoubleBookings (431 ms)
+   [FAIL] noDoubleBookings (367 ms)
 
    ● definitiveAnswers - every client gets a definitive, truthful answer (201 or a justified 409)
       ✔ 503 responses (gave up)                                        expected 0, got 0
       ✔ 500 responses (exception leaked)                               expected 0, got 0
       ✔ 409s not explained by a committed overlapping booking          expected 0, got 0
       ✔ cold slots on the hot court booked                             expected 10, got 10
-   [PASS] definitiveAnswers (4 ms)
+   [PASS] definitiveAnswers (3 ms)
 
    ● lockWaitAndRetryBudget - lock waits stay inside 50ms and retries inside the 2-retry budget
-      ✔ max single lock wait                                           4.10ms (limit 52.00ms)
+      ✔ max single lock wait                                           2.35ms (limit 52.00ms)
       ✔ lock_timeout aborts (each must be absorbed by the retry budget) 0 aborts, 0 retries
       ✔ max attempts per request <= 3                                  got 1
       ✔ retry amplification (attempts / requests)                      1.00x (limit 1.10x)
@@ -87,22 +87,22 @@
 
 ▶ MultiNodeConsistencyTest
    ● singleNodeControl - control: 21 identical requests on ONE pod -> exactly one booking
-        round 1: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=38 ms
-        round 2: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=38 ms
-        round 3: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=39 ms
+        round 1: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=34 ms
+        round 2: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=31 ms
+        round 3: 1 pod(s)  winners by pod={node-a=1}  double bookings=0  wall=34 ms
       ✔ round 1: confirmed reservations for 14:00-15:00                expected 1, got 1
       ✔ round 2: confirmed reservations for 14:00-15:00                expected 1, got 1
       ✔ round 3: confirmed reservations for 14:00-15:00                expected 1, got 1
-   [PASS] singleNodeControl (123 ms)
+   [PASS] singleNodeControl (106 ms)
 
    ● sameSlotAcrossThreeNodes - 21 identical requests spread over THREE pods -> exactly one booking
-        round 1: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=24 ms
-        round 2: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=24 ms
-        round 3: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=21 ms
+        round 1: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=19 ms
+        round 2: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=19 ms
+        round 3: 3 pod(s)  winners by pod={node-a=1, node-b=1, node-c=1}  double bookings=3  wall=20 ms
       ✘ round 1: confirmed reservations for 14:00-15:00                expected 1, got 3
       ✘ round 2: confirmed reservations for 14:00-15:00                expected 1, got 3
       ✘ round 3: confirmed reservations for 14:00-15:00                expected 1, got 3
-   [FAIL] sameSlotAcrossThreeNodes (76 ms)
+   [FAIL] sameSlotAcrossThreeNodes (63 ms)
 
    ● idempotentRetryAcrossNodes - client retry of the SAME request lands on another pod -> one reservation, same id
       ✘ round 1: reservations stored for one Idempotency-Key           expected 1, got 2
@@ -111,7 +111,7 @@
       ✘ round 2: both calls succeed with the same reservation id       HTTP 201/201, distinct ids=2
       ✘ round 3: reservations stored for one Idempotency-Key           expected 1, got 2
       ✘ round 3: both calls succeed with the same reservation id       HTTP 201/201, distinct ids=2
-   [FAIL] idempotentRetryAcrossNodes (45 ms)
+   [FAIL] idempotentRetryAcrossNodes (35 ms)
 
 
 ▶ PartialFailureTest
@@ -121,27 +121,27 @@
       ✘ card holds placed at the payment provider                      expected 1, got 2
       ✘ orphaned holds + orphaned events (orphanHolds=1 duplicateHolds=0 missingHolds=0 orphanEvents=1 duplicateEvents=0 missingEvents=0) expected 0, got 2
       ✘ all side-effect violations                                     expected 0, got 2
-   [FAIL] commitFailureLeavesNoOrphans (39 ms)
+   [FAIL] commitFailureLeavesNoOrphans (31 ms)
 
    ● commitAckLostIsIdempotent - COMMIT succeeds but the ack is lost -> retry returns the SAME booking, not a 409
-      ✘ client is told the booking succeeded (200/201)                 HTTP 409 {"error":"SLOT_TAKEN","conflictsWith":"R-bf3e12e2-bd99-4538-9788-31ac7bc9db2b"}
+      ✘ client is told the booking succeeded (200/201)                 HTTP 409 {"error":"SLOT_TAKEN","conflictsWith":"R-e5303d17-d6b9-4b99-8a37-7b225f11b622"}
       ✔ reservations stored                                            expected 1, got 1
       ✘ returned id is the stored reservation                          returned -
       ✔ all side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
-   [FAIL] commitAckLostIsIdempotent (32 ms)
+   [FAIL] commitAckLostIsIdempotent (25 ms)
 
 
 ▶ LockTimeoutRetryTest
    ● stalledHolderBoundedWaiter - lock holder stalls 600ms -> waiter times out at 50ms, retries <= 2, answers 503
-        waiter: HTTP 500 {"error":"LockWaitTimeoutException: lock_timeout: waited 50.3 ms for row lock on resource:COURT-1"}  attempts=6  latency=416 ms  lock timeouts=6  max wait=50.3 ms
+        waiter: HTTP 500 {"error":"LockWaitTimeoutException: lock_timeout: waited 50.1 ms for row lock on resource:COURT-1"}  attempts=6  latency=408 ms  lock timeouts=6  max wait=50.1 ms
       ✔ stalled holder eventually books                                expected 201, got 201
       ✘ waiter answered 503 + Retry-After (not 500, not a double booking) expected 503, got 500
       ✘ waiter attempts <= 3                                           got 6
-      ✔ each lock wait                                                 50.26ms (limit 52.00ms)
-      ✘ waiter gives up within                                         415.73ms (limit 250.00ms)
+      ✔ each lock wait                                                 50.12ms (limit 52.00ms)
+      ✘ waiter gives up within                                         407.63ms (limit 250.00ms)
       ✔ double bookings                                                expected 0, got 0
       ✘ side-effect violations (orphanHolds=6 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 6
-   [FAIL] stalledHolderBoundedWaiter (622 ms)
+   [FAIL] stalledHolderBoundedWaiter (626 ms)
 
    ● persistentFailuresRespectRetryBudget - persistent COMMIT failures -> stop after 2 retries, no money left on hold
         HTTP 500 {"error":"TransientDbException: FATAL: connection reset by peer during COMMIT (tx 6)"}  attempts=6  payment calls=6
@@ -149,7 +149,7 @@
       ✘ client gets 503 + Retry-After                                  expected 503, got 500
       ✘ active card holds left behind                                  expected 0, got 6
       ✘ side-effect violations (orphanHolds=6 duplicateHolds=0 missingHolds=0 orphanEvents=6 duplicateEvents=0 missingEvents=0) expected 0, got 12
-   [FAIL] persistentFailuresRespectRetryBudget (126 ms)
+   [FAIL] persistentFailuresRespectRetryBudget (122 ms)
 
    ● conflictIsNotRetried - a business conflict (409) is never retried
       ✔ HTTP                                                           expected 409, got 409
@@ -161,11 +161,11 @@
 ▶ RegressionTest
    ● bookFreeSlot - book a free slot -> 201, row stored, card hold + created event delivered
       ✔ HTTP                                                           expected 201, got 201
-      ✔ row stored as CONFIRMED with price 40.00                       Reservation[id=R-67bdfbb8-c5e9-4b09-a0aa-eaf136f0484f, requestId=idem-560, resourceId=COURT-1, customerId=cust-560, interval=[2026-12-05T08:00:00Z .. 2026-12-05T09:00:00Z), status=CONFIRMED, amountCents=4000, paymentHoldKey=f20bfa63-c280-4caf-a8eb-72e3fa73f84f, createdByNode=node-a, version=1]
+      ✔ row stored as CONFIRMED with price 40.00                       Reservation[id=R-c8bd0292-94f2-456c-bd29-226c4953ab28, requestId=idem-560, resourceId=COURT-1, customerId=cust-560, interval=[2026-12-05T08:00:00Z .. 2026-12-05T09:00:00Z), status=CONFIRMED, amountCents=4000, paymentHoldKey=fb3b1996-3b27-451b-97fc-1c8f3d6f2d49, createdByNode=node-a, version=1]
       ✔ active holds                                                   expected 1, got 1
       ✔ created events                                                 expected 1, got 1
       ✔ side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
-   [PASS] bookFreeSlot (26 ms)
+   [PASS] bookFreeSlot (39 ms)
 
    ● invalidInterval - end before start -> 400 INVALID_INTERVAL
       ✔ HTTP                                                           expected 400, got 400
@@ -173,7 +173,7 @@
 
    ● tooLong - longer than 8h -> 400 BOOKING_TOO_LONG
       ✔ HTTP                                                           expected 400, got 400
-   [PASS] tooLong (0 ms)
+   [PASS] tooLong (1 ms)
 
    ● unknownResource - unknown resource -> 404
       ✔ HTTP                                                           expected 404, got 404
@@ -185,7 +185,7 @@
       ✔ cancelled event published                                      
       ✔ re-booking the freed slot                                      expected 201, got 201
       ✔ side-effect violations (orphanHolds=0 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) expected 0, got 0
-   [PASS] cancelReleasesSlot (50 ms)
+   [PASS] cancelReleasesSlot (41 ms)
 
    ● cancelTwice - cancel twice -> second DELETE is 409
       ✔ first DELETE                                                   expected 204, got 204
@@ -197,15 +197,15 @@
       ✔ 10:00-10:20                                                    expected 201, got 201
       ✔ 10:20-10:40                                                    expected 201, got 201
       ✔ 10:40-11:00                                                    expected 201, got 201
-   [PASS] backToBackShortBookings (30 ms)
+   [PASS] backToBackShortBookings (27 ms)
 
    ● differentResourcesIndependent - same interval on two different courts -> both 201
       ✔ COURT-1                                                        expected 201, got 201
       ✔ COURT-2                                                        expected 201, got 201
-   [PASS] differentResourcesIndependent (22 ms)
+   [PASS] differentResourcesIndependent (19 ms)
 
 ════════════════════════════════════════════════════════════════════════════════════════════════════
- RESULT: 17 passed, 10 failed   (2.0 s)
+ RESULT: 17 passed, 10 failed   (1.8 s)
    ✘ OverlappingIntervalTest.leftPartialOverlapRejected: 2 check(s) failed: second request [2026-12-05T09:30:00Z .. 2026-12-05T10:30:00Z) -> HTTP (actual: expected 409, got 201); double bookings in DB (actual: expected 0, got 1)
    ✘ OverlappingIntervalTest.enclosingIntervalRejected: 2 check(s) failed: second request [2026-12-05T09:00:00Z .. 2026-12-05T12:00:00Z) -> HTTP (actual: expected 409, got 201); double bookings in DB (actual: expected 0, got 1)
    ✘ OverlappingIntervalTest.concurrentPartialOverlapsAcrossNodes: 1 check(s) failed: rounds that ended with a double booking (actual: expected 0, got 10)
@@ -213,7 +213,7 @@
    ✘ MultiNodeConsistencyTest.sameSlotAcrossThreeNodes: 3 check(s) failed: round 1: confirmed reservations for 14:00-15:00 (actual: expected 1, got 3); round 2: confirmed reservations for 14:00-15:00 (actual: expected 1, got 3); round 3: confirmed reservations for 14:00-15:00 (actual: expected 1, got 3)
    ✘ MultiNodeConsistencyTest.idempotentRetryAcrossNodes: 6 check(s) failed: round 1: reservations stored for one Idempotency-Key (actual: expected 1, got 2); round 1: both calls succeed with the same reservation id (actual: HTTP 201/201, distinct ids=2); round 2: reservations stored for one Idempotency-Key (actual: expected 1, got 2); round 2: both calls succeed with the same reservation id (actual: HTTP 201/201, distinct ids=2); round 3: reservations stored for one Idempotency-Key (actual: expected 1, got 2); round 3: both calls succeed with the same reservation id (actual: HTTP 201/201, distinct ids=2)
    ✘ PartialFailureTest.commitFailureLeavesNoOrphans: 3 check(s) failed: card holds placed at the payment provider (actual: expected 1, got 2); orphaned holds + orphaned events (orphanHolds=1 duplicateHolds=0 missingHolds=0 orphanEvents=1 duplicateEvents=0 missingEvents=0) (actual: expected 0, got 2); all side-effect violations (actual: expected 0, got 2)
-   ✘ PartialFailureTest.commitAckLostIsIdempotent: 2 check(s) failed: client is told the booking succeeded (200/201) (actual: HTTP 409 {"error":"SLOT_TAKEN","conflictsWith":"R-bf3e12e2-bd99-4538-9788-31ac7bc9db2b"}); returned id is the stored reservation (actual: returned -)
-   ✘ LockTimeoutRetryTest.stalledHolderBoundedWaiter: 4 check(s) failed: waiter answered 503 + Retry-After (not 500, not a double booking) (actual: expected 503, got 500); waiter attempts <= 3 (actual: got 6); waiter gives up within (actual: 415.73ms (limit 250.00ms)); side-effect violations (orphanHolds=6 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) (actual: expected 0, got 6)
+   ✘ PartialFailureTest.commitAckLostIsIdempotent: 2 check(s) failed: client is told the booking succeeded (200/201) (actual: HTTP 409 {"error":"SLOT_TAKEN","conflictsWith":"R-e5303d17-d6b9-4b99-8a37-7b225f11b622"}); returned id is the stored reservation (actual: returned -)
+   ✘ LockTimeoutRetryTest.stalledHolderBoundedWaiter: 4 check(s) failed: waiter answered 503 + Retry-After (not 500, not a double booking) (actual: expected 503, got 500); waiter attempts <= 3 (actual: got 6); waiter gives up within (actual: 407.63ms (limit 250.00ms)); side-effect violations (orphanHolds=6 duplicateHolds=0 missingHolds=0 orphanEvents=0 duplicateEvents=0 missingEvents=0) (actual: expected 0, got 6)
    ✘ LockTimeoutRetryTest.persistentFailuresRespectRetryBudget: 4 check(s) failed: attempts <= 3 (actual: got 6); client gets 503 + Retry-After (actual: expected 503, got 500); active card holds left behind (actual: expected 0, got 6); side-effect violations (orphanHolds=6 duplicateHolds=0 missingHolds=0 orphanEvents=6 duplicateEvents=0 missingEvents=0) (actual: expected 0, got 12)
 ════════════════════════════════════════════════════════════════════════════════════════════════════

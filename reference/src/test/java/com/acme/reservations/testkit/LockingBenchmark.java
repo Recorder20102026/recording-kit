@@ -46,13 +46,19 @@ public final class LockingBenchmark {
     private LockingBenchmark() {
     }
 
-    /**
-     * The hard constraints from {@link Constraints}, applied to one strategy's results.
-     * Return {@code null} while no checks are written yet.
-     */
+    /** The hard constraints from {@link Constraints}, applied to one strategy's results. */
     static Verdict checkConstraints(Result r) {
-        // TODO: assert the hard constraints from Constraints.java against r (service-specific, not part of this patch)
-        return null;
+        return new Verdict()
+                .equal("double bookings (overlap race + 20x burst)", 0, r.doubleBookings())
+                .equal("500 responses (exception leaked to the client)", 0, r.serverErrors500())
+                .equal("503 responses (retry budget exhausted)", 0, r.busy503())
+                .atMost("max single lock wait", Constraints.lockWaitLimitMillis(), r.maxLockWaitMs(), "ms")
+                .atMost("lock_timeout aborts per request", Constraints.MAX_RETRY_AMPLIFICATION - 1,
+                        r.lockTimeoutsPerRequest(), "")
+                .check("max attempts per request <= " + Constraints.MAX_ATTEMPTS,
+                        r.maxAttempts() <= Constraints.MAX_ATTEMPTS, "got " + r.maxAttempts())
+                .atMost("retry amplification (attempts / requests)", Constraints.MAX_RETRY_AMPLIFICATION,
+                        r.amplification(), "x");
     }
 
     public static void main(String[] args) {
@@ -91,7 +97,7 @@ public final class LockingBenchmark {
         System.out.println(" counts (dbl-books, 503, 500, lock t/o) are summed over all rounds; max wait, max att, ampl., p99, cold max = worst round");
         System.out.println(line);
         System.out.println(" RESULT: accepted=" + withVerdict(verdicts, "ACCEPT") + "  rejected="
-                + withVerdict(verdicts, "REJECT") + "  not checked=" + withVerdict(verdicts, "n/a"));
+                + withVerdict(verdicts, "REJECT"));
         System.out.println(line);
     }
 
@@ -174,10 +180,6 @@ public final class LockingBenchmark {
     }
 
     private static String verdict(Verdict checks) {
-        if (checks == null) {
-            System.out.println("      (no constraint checks written yet - see checkConstraints)");
-            return "n/a - no checks yet";
-        }
         try {
             checks.assertAll();
             return "ACCEPT";

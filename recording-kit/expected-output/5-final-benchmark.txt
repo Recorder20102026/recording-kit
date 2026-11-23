@@ -6,14 +6,14 @@
 
 ▶ strategy: fenced
    overlap race : 10 rounds x 3 partially overlapping requests on 3 pods -> rounds with a double booking=0, overlapping pairs=0
-   burst round 1: 201=14  409=116 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait=  7.1 ms | retries=0   max attempts=1 amplification=1.00x | p50=  6.1 p99=   9.2 ms cold max=   5.1 ms
-   burst round 2: 201=14  409=116 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 16.7 ms | retries=0   max attempts=1 amplification=1.00x | p50= 12.4 p99=  18.8 ms cold max=   4.9 ms
-   burst round 3: 201=14  409=116 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 25.9 ms | retries=0   max attempts=1 amplification=1.00x | p50= 20.5 p99=  28.0 ms cold max=   4.9 ms
+   burst round 1: 201=13  409=117 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 19.0 ms | retries=0   max attempts=1 amplification=1.00x | p50=  8.2 p99=  21.0 ms cold max=   4.7 ms
+   burst round 2: 201=14  409=116 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 10.1 ms | retries=0   max attempts=1 amplification=1.00x | p50=  7.5 p99=  11.8 ms cold max=   4.3 ms
+   burst round 3: 201=13  409=117 503=0   500=0   | double bookings=0  | lock timeouts=0   max wait= 15.3 ms | retries=0   max attempts=1 amplification=1.00x | p50=  8.2 p99=  17.4 ms cold max=   5.1 ms
    constraint checks:
       ✔ double bookings (overlap race + 20x burst)                     expected 0, got 0
       ✔ 500 responses (exception leaked to the client)                 expected 0, got 0
       ✔ 503 responses (retry budget exhausted)                         expected 0, got 0
-      ✔ max single lock wait                                           25.95ms (limit 52.00ms)
+      ✔ max single lock wait                                           18.99ms (limit 52.00ms)
       ✔ lock_timeout aborts per request                                0.00 (limit 0.10)
       ✔ max attempts per request <= 3                                  got 1
       ✔ retry amplification (attempts / requests)                      1.00x (limit 1.10x)
@@ -21,8 +21,8 @@
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
  strategy                   | dbl-books | 503 | 500 | lock t/o | max wait | max att |  ampl. |     p99 | cold max | verdict
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- fenced                     |         0 |   0 |   0 |        0 |  25.9 ms |       1 |  1.00x |   28 ms |     5 ms | ACCEPT
+ fenced                     |         0 |   0 |   0 |        0 |  19.0 ms |       1 |  1.00x |   21 ms |     5 ms | ACCEPT
  counts (dbl-books, 503, 500, lock t/o) are summed over all rounds; max wait, max att, ampl., p99, cold max = worst round
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
- RESULT: accepted=[fenced]  rejected=[]  not checked=[]
+ RESULT: accepted=[fenced]  rejected=[]
 ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════

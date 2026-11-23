@@ -1,6 +1,27 @@
-diff -ruN -x build -x reports a/docs/adr/ADR-007-reservation-locking.md r/docs/adr/ADR-007-reservation-locking.md
+diff -ruN -x build -x reports a/config/reservation.properties b/config/reservation.properties
+--- a/config/reservation.properties	2026-11-20 23:12:20
++++ b/config/reservation.properties	2026-11-23 06:43:17
+@@ -18,10 +18,10 @@
+ # Horizontal pod autoscaler min replicas
+ cluster.nodes=3
+ 
+-# --- Reservation path -----------------------------------------------------
+-# RES-212 hotfix: serialize bookings per resource inside the JVM.
+-reservation.local.lock.enabled=true
+-
+-# Retry on lock timeout / transient DB errors.
+-retry.max.retries=5
+-retry.backoff.ms=10
++# --- Reservation path (ADR-007) -------------------------------------------
++reservation.locking.strategy=fenced
++slot.bucket.minutes=15
++retry.max.retries=2
++retry.backoff.base.ms=2
++retry.backoff.max.ms=20
++retry.client.retry-after.ms=200
+diff -ruN -x build -x reports a/docs/adr/ADR-007-reservation-locking.md b/docs/adr/ADR-007-reservation-locking.md
 --- a/docs/adr/ADR-007-reservation-locking.md	1970-01-01 05:30:00
-+++ r/docs/adr/ADR-007-reservation-locking.md	2026-11-23 06:47:53
++++ b/docs/adr/ADR-007-reservation-locking.md	2026-11-23 08:15:24
 @@ -0,0 +1,63 @@
 +# ADR-007: Locking strategy for the reservation write path
 +
@@ -32,11 +53,11 @@ diff -ruN -x build -x reports a/docs/adr/ADR-007-reservation-locking.md r/docs/a
 +
 +| Candidate | Double bookings | Lock-timeout aborts | Max lock wait | Max attempts | Amplification | Cold-slot max | Verdict |
 +|---|---|---|---|---|---|---|---|
-+| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~90 per round (0.68 per request)** | 50.4 ms | 2 | **1.68-1.71x** | ~65 ms | rejected |
++| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~80-90 per round (~0.6-0.7 per request)** | ~50.3 ms | 2 | **~1.6-1.7x** | ~65 ms | rejected |
 +| `fenced`: slot-bucket locks + version-guarded claim | 0 | 0 | ~20-40 ms | 1 | 1.00x | ~5-7 ms | **accepted** |
 +
 +* **pessimistic** is correct (the parent row always exists, and it lives in the shared DB), but every booking
-+  of a court queues on one row, including cold slots nobody competes for. At 20x, about 90 requests per round
++  of a court queues on one row, including cold slots nobody competes for. At 20x, 80-90 requests per round
 +  wait the full 50 ms, get `55P03`, and retry: 1.7x amplification against a 1.10x budget. With
 +  `reservation.locking.strategy=pessimistic`, `BurstContentionTest.lockWaitAndRetryBudget` fails for the same reason.
 +* **fenced** locks only the 15-minute buckets the interval touches. Overlapping intervals always share a bucket,
@@ -65,9 +86,9 @@ diff -ruN -x build -x reports a/docs/adr/ADR-007-reservation-locking.md r/docs/a
 +  neighbours. 15 min = booking granularity (max 32 buckets for an 8 h booking).
 +* Ops: nightly cleanup of buckets older than 7 days; backfill buckets from confirmed reservations before rollout.
 +* Downstream systems see a booking up to one outbox relay interval (100 ms) after COMMIT.
-diff -ruN -x build -x reports a/scripts/benchmark.sh r/scripts/benchmark.sh
+diff -ruN -x build -x reports a/scripts/benchmark.sh b/scripts/benchmark.sh
 --- a/scripts/benchmark.sh	1970-01-01 05:30:00
-+++ r/scripts/benchmark.sh	2026-11-23 06:45:18
++++ b/scripts/benchmark.sh	2026-11-23 06:44:34
 @@ -0,0 +1,11 @@
 +#!/usr/bin/env bash
 +# Race / burst benchmark for candidate locking strategies (LockingBenchmark).
@@ -80,9 +101,30 @@ diff -ruN -x build -x reports a/scripts/benchmark.sh r/scripts/benchmark.sh
 +# Fixed heap + throughput GC: keeps GC pauses out of the lock-wait measurements.
 +JAVA_OPTS="${JAVA_OPTS:--Xms512m -Xmx1g -XX:+UseParallelGC}"
 +java $JAVA_OPTS -cp build/classes:build/test-classes com.acme.reservations.testkit.LockingBenchmark "$@"
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/config/ReservationConfig.java r/src/main/java/com/acme/reservations/config/ReservationConfig.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/cluster/ServiceNode.java b/src/main/java/com/acme/reservations/cluster/ServiceNode.java
+--- a/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/cluster/ServiceNode.java	2026-11-23 06:43:17
+@@ -28,9 +28,14 @@
+         ReservationRepository reservations = new ReservationRepository();
+         ResourceRepository resources = new ResourceRepository();
+         OutboxRepository outbox = new OutboxRepository(db);
+-        this.service = new ReservationService(name, db, reservations, resources, outbox,
+-                new SlotAvailabilityChecker(reservations), paymentGateway, eventBus,
+-                RetryPolicy.fromConfig(config), config, metrics);
++        SlotAvailabilityChecker availability = new SlotAvailabilityChecker(reservations);
++        LockingStrategy locking = switch (config.lockingStrategy()) {
++            case "pessimistic" -> new PessimisticResourceLock(resources, availability);
++            case "fenced" -> new SlotBucketFence(config.slotBucketSize());
++            default -> throw new IllegalArgumentException("unknown reservation.locking.strategy: " + config.lockingStrategy());
++        };
++        this.service = new ReservationService(name, db, reservations, resources, outbox, availability,
++                locking, RetryPolicy.fromConfig(config), metrics);
+         this.controller = new ReservationController(service);
+         this.outboxRelay = new OutboxRelay(db, outbox, paymentGateway, eventBus);
+     }
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/config/ReservationConfig.java b/src/main/java/com/acme/reservations/config/ReservationConfig.java
 --- a/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-23 00:53:23
-+++ r/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/config/ReservationConfig.java	2026-11-23 06:43:02
 @@ -9,7 +9,8 @@
  
  /**
@@ -126,9 +168,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/config/Reser
      }
  
      public DbConfig dbConfig() {
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/Schema.java r/src/main/java/com/acme/reservations/persistence/Schema.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/Schema.java b/src/main/java/com/acme/reservations/persistence/Schema.java
 --- a/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-23 00:53:23
-+++ r/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/persistence/Schema.java	2026-11-23 06:42:07
 @@ -15,6 +15,8 @@
   *                           amount_cents bigint, payment_hold_key text, created_by_node text, version bigint);
   * CREATE INDEX reservation_resource_time ON reservation (resource_id, starts_at);
@@ -146,9 +188,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/
  
      private Schema() {
      }
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/SlotBucket.java r/src/main/java/com/acme/reservations/persistence/SlotBucket.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/SlotBucket.java b/src/main/java/com/acme/reservations/persistence/SlotBucket.java
 --- a/src/main/java/com/acme/reservations/persistence/SlotBucket.java	1970-01-01 05:30:00
-+++ r/src/main/java/com/acme/reservations/persistence/SlotBucket.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/persistence/SlotBucket.java	2026-11-23 06:42:07
 @@ -0,0 +1,43 @@
 +package com.acme.reservations.persistence;
 +
@@ -193,9 +235,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/persistence/
 +        return new SlotBucket(key, resourceId, bucketStart, version + 1, next);
 +    }
 +}
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/LockingStrategy.java r/src/main/java/com/acme/reservations/service/LockingStrategy.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/LockingStrategy.java b/src/main/java/com/acme/reservations/service/LockingStrategy.java
 --- a/src/main/java/com/acme/reservations/service/LockingStrategy.java	1970-01-01 05:30:00
-+++ r/src/main/java/com/acme/reservations/service/LockingStrategy.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/service/LockingStrategy.java	2026-11-23 06:42:18
 @@ -0,0 +1,40 @@
 +package com.acme.reservations.service;
 +
@@ -237,9 +279,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/Lock
 +        void claim(Transaction tx, String reservationId);
 +    }
 +}
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java r/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java b/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java
 --- a/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java	1970-01-01 05:30:00
-+++ r/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/service/PessimisticResourceLock.java	2026-11-23 06:42:26
 @@ -0,0 +1,59 @@
 +package com.acme.reservations.service;
 +
@@ -300,9 +342,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/Pess
 +        // Nothing to undo: the row lock is released by COMMIT, and the cancelled row stops matching findConflict.
 +    }
 +}
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/ReservationService.java r/src/main/java/com/acme/reservations/service/ReservationService.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/ReservationService.java b/src/main/java/com/acme/reservations/service/ReservationService.java
 --- a/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-23 00:53:23
-+++ r/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/service/ReservationService.java	2026-11-23 06:43:02
 @@ -1,19 +1,18 @@
  package com.acme.reservations.service;
  
@@ -518,9 +560,9 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/Rese
              outbox.enqueue(tx, OutboxMessage.Type.RELEASE_PAYMENT_HOLD, reservation.id(), reservation.resourceId(),
                      reservation.customerId(), reservation.amountCents(), reservation.paymentHoldKey());
              outbox.enqueue(tx, OutboxMessage.Type.RESERVATION_CANCELLED_EVENT, reservation.id(),
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/RetryPolicy.java r/src/main/java/com/acme/reservations/service/RetryPolicy.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/RetryPolicy.java b/src/main/java/com/acme/reservations/service/RetryPolicy.java
 --- a/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-20 23:12:20
-+++ r/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/service/RetryPolicy.java	2026-11-23 06:42:07
 @@ -1,32 +1,71 @@
  package com.acme.reservations.service;
  
@@ -604,9 +646,34 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/Retr
      }
  
      public int maxRetries() {
-diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/SlotBucketFence.java r/src/main/java/com/acme/reservations/service/SlotBucketFence.java
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java
+--- a/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-23 00:53:23
++++ b/src/main/java/com/acme/reservations/service/SlotAvailabilityChecker.java	2026-11-23 06:48:22
+@@ -4,7 +4,6 @@
+ import com.acme.reservations.domain.*;
+ import com.acme.reservations.persistence.ReservationRepository;
+ 
+-import java.time.Instant;
+ import java.util.Optional;
+ 
+ /** Answers "is this resource free for this interval?" against the reservation table. */
+@@ -22,11 +21,8 @@
+      */
+     public Optional<Reservation> findConflict(Transaction tx, String resourceId, TimeInterval requested) {
+         for (Reservation existing : reservations.findActiveByResource(tx, resourceId)) {
+-            // A booking clashes when it would start while another booking is still running.
+-            Instant requestedStart = requested.start();
+-            boolean startsDuringExisting = !requestedStart.isBefore(existing.interval().start())
+-                    && requestedStart.isBefore(existing.interval().end());
+-            if (startsDuringExisting) {
++            // Half-open overlap: catches left/right partial, contained, enclosing and identical intervals.
++            if (existing.interval().overlaps(requested)) {
+                 return Optional.of(existing);
+             }
+         }
+diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/SlotBucketFence.java b/src/main/java/com/acme/reservations/service/SlotBucketFence.java
 --- a/src/main/java/com/acme/reservations/service/SlotBucketFence.java	1970-01-01 05:30:00
-+++ r/src/main/java/com/acme/reservations/service/SlotBucketFence.java	2026-11-23 06:45:18
++++ b/src/main/java/com/acme/reservations/service/SlotBucketFence.java	2026-11-23 06:42:42
 @@ -0,0 +1,123 @@
 +package com.acme.reservations.service;
 +
@@ -731,10 +798,10 @@ diff -ruN -x build -x reports a/src/main/java/com/acme/reservations/service/Slot
 +        return Instant.parse(key.substring(key.lastIndexOf('@') + 1));
 +    }
 +}
-diff -ruN -x build -x reports a/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java r/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java
+diff -ruN -x build -x reports a/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java b/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java
 --- a/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java	1970-01-01 05:30:00
-+++ r/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java	2026-11-23 06:45:57
-@@ -0,0 +1,201 @@
++++ b/src/test/java/com/acme/reservations/testkit/LockingBenchmark.java	2026-11-23 08:13:57
+@@ -0,0 +1,203 @@
 +package com.acme.reservations.testkit;
 +
 +import com.acme.reservations.cluster.*;
@@ -783,13 +850,19 @@ diff -ruN -x build -x reports a/src/test/java/com/acme/reservations/testkit/Lock
 +    private LockingBenchmark() {
 +    }
 +
-+    /**
-+     * The hard constraints from {@link Constraints}, applied to one strategy's results.
-+     * Return {@code null} while no checks are written yet.
-+     */
++    /** The hard constraints from {@link Constraints}, applied to one strategy's results. */
 +    static Verdict checkConstraints(Result r) {
-+        // TODO: assert the hard constraints from Constraints.java against r (service-specific, not part of this patch)
-+        return null;
++        return new Verdict()
++                .equal("double bookings (overlap race + 20x burst)", 0, r.doubleBookings())
++                .equal("500 responses (exception leaked to the client)", 0, r.serverErrors500())
++                .equal("503 responses (retry budget exhausted)", 0, r.busy503())
++                .atMost("max single lock wait", Constraints.lockWaitLimitMillis(), r.maxLockWaitMs(), "ms")
++                .atMost("lock_timeout aborts per request", Constraints.MAX_RETRY_AMPLIFICATION - 1,
++                        r.lockTimeoutsPerRequest(), "")
++                .check("max attempts per request <= " + Constraints.MAX_ATTEMPTS,
++                        r.maxAttempts() <= Constraints.MAX_ATTEMPTS, "got " + r.maxAttempts())
++                .atMost("retry amplification (attempts / requests)", Constraints.MAX_RETRY_AMPLIFICATION,
++                        r.amplification(), "x");
 +    }
 +
 +    public static void main(String[] args) {
@@ -828,7 +901,7 @@ diff -ruN -x build -x reports a/src/test/java/com/acme/reservations/testkit/Lock
 +        System.out.println(" counts (dbl-books, 503, 500, lock t/o) are summed over all rounds; max wait, max att, ampl., p99, cold max = worst round");
 +        System.out.println(line);
 +        System.out.println(" RESULT: accepted=" + withVerdict(verdicts, "ACCEPT") + "  rejected="
-+                + withVerdict(verdicts, "REJECT") + "  not checked=" + withVerdict(verdicts, "n/a"));
++                + withVerdict(verdicts, "REJECT"));
 +        System.out.println(line);
 +    }
 +
@@ -911,10 +984,6 @@ diff -ruN -x build -x reports a/src/test/java/com/acme/reservations/testkit/Lock
 +    }
 +
 +    private static String verdict(Verdict checks) {
-+        if (checks == null) {
-+            System.out.println("      (no constraint checks written yet - see checkConstraints)");
-+            return "n/a - no checks yet";
-+        }
 +        try {
 +            checks.assertAll();
 +            return "ACCEPT";

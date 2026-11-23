@@ -28,11 +28,11 @@ candidates were built from the platform reference patch and measured with the sa
 
 | Candidate | Double bookings | Lock-timeout aborts | Max lock wait | Max attempts | Amplification | Cold-slot max | Verdict |
 |---|---|---|---|---|---|---|---|
-| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~90 per round (0.68 per request)** | 50.4 ms | 2 | **1.68-1.71x** | ~65 ms | rejected |
+| `pessimistic`: `SELECT ... FOR UPDATE` on the parent resource row | 0 | **~80-90 per round (~0.6-0.7 per request)** | ~50.3 ms | 2 | **~1.6-1.7x** | ~65 ms | rejected |
 | `fenced`: slot-bucket locks + version-guarded claim | 0 | 0 | ~20-40 ms | 1 | 1.00x | ~5-7 ms | **accepted** |
 
 * **pessimistic** is correct (the parent row always exists, and it lives in the shared DB), but every booking
-  of a court queues on one row, including cold slots nobody competes for. At 20x, about 90 requests per round
+  of a court queues on one row, including cold slots nobody competes for. At 20x, 80-90 requests per round
   wait the full 50 ms, get `55P03`, and retry: 1.7x amplification against a 1.10x budget. With
   `reservation.locking.strategy=pessimistic`, `BurstContentionTest.lockWaitAndRetryBudget` fails for the same reason.
 * **fenced** locks only the 15-minute buckets the interval touches. Overlapping intervals always share a bucket,

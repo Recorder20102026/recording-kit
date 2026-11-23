@@ -7,18 +7,20 @@ Each step has three parts:
   class, method, test or number on screen, so you never have to point at "this" or "that".
 * **EXPECT**: what appears on screen. Numbers vary slightly from run to run; the pass/fail pattern does not.
 
-**Copy-paste vs. typed.** The large blocks come from the GitHub reference patch:
-`https://github.com/Recorder20102026/recording-kit/tree/main/reference`. Open each file there in Chrome, click
-the **Copy raw file** button (two-squares icon, top right of the file view), and paste into IntelliJ.
-You type only the **five small edits** marked ✍️ (exact text is in this transcript):
+**Copy-paste vs. typed.** The GitHub reference patch,
+`https://github.com/Recorder20102026/recording-kit/tree/main/reference`, contains the final version of **every**
+changed file (14 files), including the four small edits you type. Open a file there in Chrome, click the
+**Copy raw file** button (two-squares icon, top right of the file view), and paste into IntelliJ. You type only
+the **four small edits** marked ✍️ (exact text is in this transcript, and in the same files under `reference/`):
 
 | ✍️ | Phase | File | What |
 |---|---|---|---|
 | T1 | 3.1 | `SlotAvailabilityChecker.java` | overlap predicate, 4 lines |
 | T2 | 3.4 | `ServiceNode.java` | integration: pick the `LockingStrategy` from config, 8 lines |
 | T3 | 3.5 | `reservation.properties` | timeout / retry wiring, 7 lines |
-| T4 | 3.6 | `LockingBenchmark.java` | constraint assertions in `checkConstraints`, 11 lines |
-| T5 | 4.3 | `reservation.properties` | `pessimistic` → `fenced`, 1 word |
+| T4 | 4.3 | `reservation.properties` | `pessimistic` → `fenced`, 1 word |
+
+If a typed edit goes wrong mid-take, paste the same file from `reference/` instead.
 
 **Pasting a new class in IntelliJ:** copy the code, click the target package in the Project tool window
 (for example `service`) and press ⌘V. IntelliJ creates the `.java` file with the right name. **Replacing an
@@ -106,10 +108,11 @@ pod. A JVM-local lock cannot coordinate three pods; the lock has to live in the 
 `reference/README.md` table lists them: `LockingStrategy`, the interface; `PessimisticResourceLock`, a
 `SELECT FOR UPDATE` on the parent resource row; `SlotBucketFence` with `SlotBucket`, which locks only the
 time buckets an interval touches and claims them with a version guard; a bounded `RetryPolicy`; a
-`ReservationService` driven by a `LockingStrategy`; and `LockingBenchmark`, a race and burst harness. The
-README also says what is **not** in the patch: the integration in `ServiceNode`, the timeout and retry
-values in `reservation.properties`, and the constraint assertions in `LockingBenchmark.checkConstraints`.
-Those three parts are service-specific, so I'll write them myself."
+`ReservationService` driven by a `LockingStrategy`; and `LockingBenchmark`, a race and burst harness with
+constraint assertions. The second table lists the service-specific changes: the overlap predicate in
+`SlotAvailabilityChecker`, the strategy wiring in `ServiceNode`, and the timeout and retry values in
+`reservation.properties`. I'll reuse the large blocks as they are, and write those three service-specific
+edits myself, using the reference versions as the target."
 
 **SAY**: "Both candidates keep their locks in the database, so both survive multiple pods. Neither one
 relies on a version counter alone: a version counter on reservation rows can't protect a partial overlap,
@@ -143,9 +146,15 @@ and 09:30 to 10:30, fired at the same instant on three different pods. Second, t
 `Workloads.hotSlotBurst`: one discarded JIT warm-up round, then three measured rounds. The `Result` record
 collects the counters: double bookings, 409 conflicts, 503s and 500s, lock-wait timeouts, the maximum lock
 wait, retries, attempts per request, retry amplification, p99 latency and cold-slot latency.
-`checkConstraints` returns `null` for now; I'll write the assertions once the candidates exist.
 For each strategy name passed to `benchmark.sh`, `LockingBenchmark` sets `reservation.locking.strategy`;
 with no names, `LockingBenchmark` runs whatever `reservation.properties` configures."
+
+**SAY** (on `checkConstraints`): "`checkConstraints` has one assertion per hard constraint from
+`Constraints.java`. Zero double bookings across the race and the burst. No 500s and no 503s, so every
+client gets a real answer. The longest single lock wait must stay within the 50 millisecond `lock_timeout`
+plus 2 milliseconds of wake-up slack. Every lock_timeout abort costs one extra attempt, so with an
+amplification budget of 1.10x, at most 0.10 aborts per request are affordable. At most three attempts,
+meaning two retries, per request. And total attempts divided by requests must stay at or under 1.10x."
 
 ### 2.4 Measure the baseline
 **DO**:
@@ -153,14 +162,15 @@ with no names, `LockingBenchmark` runs whatever `reservation.properties` configu
 ./scripts/benchmark.sh | tee reports/baseline-benchmark.txt
 ```
 **EXPECT** (`expected-output/2-baseline-benchmark.txt`): strategy `(current code)`; overlap race with 10 rounds
-with a double booking; burst rounds with 4–7 double bookings each, lock timeouts 0, p99 ≈ 113–127 ms,
-cold max ≈ 107–125 ms; verdict `n/a - no checks yet`.
+with a double booking; burst rounds with 4–7 double bookings each, lock timeouts 0, p99 ≈ 95–127 ms,
+cold max ≈ 100–125 ms; constraint checks with one ✘ on double bookings; verdict `REJECT - 1 check(s) failed`.
 
 **SAY**: "The harness reproduces INCIDENT-2291 on demand: 10 out of 10 race rounds double book, and every
 burst round double books, dozens of overlapping pairs in total. The database lock timeouts are zero and the
 maximum database lock wait is about 4 milliseconds, yet p99 latency is around 120 milliseconds and even cold
 slots that nobody competes for take over 100 milliseconds. The time is spent queueing on the JVM-local
-`ReentrantLock`, not in the database. That's the baseline the two candidates have to beat."
+`ReentrantLock`, not in the database. `checkConstraints` rejects the current code on double bookings
+alone. That's the baseline the two candidates have to beat."
 
 ---
 
@@ -220,7 +230,7 @@ the card hold and the event go into the outbox in the same transaction, so a rol
 cannot be applied to given types`, with `required: ... SlotAvailabilityChecker,LockingStrategy,RetryPolicy,ServiceMetrics`.
 
 **SAY**: "One compile error, in `ServiceNode`: the new `ReservationService` constructor needs a
-`LockingStrategy`. Wiring the strategy into each pod is the integration the reference patch leaves to me."
+`LockingStrategy`. Wiring the strategy into each pod is the service-specific integration I write by hand."
 
 ### 3.4 ✍️ T2: integration in `ServiceNode`
 **DO**: In `cluster/ServiceNode.java`, replace the three lines that start with
@@ -260,29 +270,7 @@ give exponential backoff with full jitter, so a request that uses both retries s
 160 milliseconds. `retry.client.retry-after.ms=200` is the Retry-After for the 503. The lock wait itself stays at
 `db.lock.wait.timeout.ms=50`. I start with `reservation.locking.strategy=pessimistic`, the simpler candidate."
 
-### 3.6 ✍️ T4: constraint assertions in the harness
-**DO**: In `LockingBenchmark.checkConstraints`, replace the `// TODO` comment and `return null;` with:
-```java
-        return new Verdict()
-                .equal("double bookings (overlap race + 20x burst)", 0, r.doubleBookings())
-                .equal("500 responses (exception leaked to the client)", 0, r.serverErrors500())
-                .equal("503 responses (retry budget exhausted)", 0, r.busy503())
-                .atMost("max single lock wait", Constraints.lockWaitLimitMillis(), r.maxLockWaitMs(), "ms")
-                .atMost("lock_timeout aborts per request", Constraints.MAX_RETRY_AMPLIFICATION - 1,
-                        r.lockTimeoutsPerRequest(), "")
-                .check("max attempts per request <= " + Constraints.MAX_ATTEMPTS,
-                        r.maxAttempts() <= Constraints.MAX_ATTEMPTS, "got " + r.maxAttempts())
-                .atMost("retry amplification (attempts / requests)", Constraints.MAX_RETRY_AMPLIFICATION,
-                        r.amplification(), "x");
-```
-**SAY**: "One assertion per hard constraint from `Constraints.java`. Zero double bookings across the race
-and the burst. No 500s and no 503s, so every client gets a real answer. The longest single lock wait must
-stay within the 50 millisecond `lock_timeout` plus 2 milliseconds of wake-up slack. Every lock_timeout
-abort costs one extra attempt, so with an amplification budget of 1.10x, at most 0.10 aborts per request
-are affordable. At most three attempts, meaning two retries, per request. And total attempts divided by
-requests must stay at or under 1.10x."
-
-### 3.7 Build and run both candidates
+### 3.6 Build and run both candidates
 **DO**:
 ```bash
 ./scripts/build.sh
@@ -290,8 +278,8 @@ requests must stay at or under 1.10x."
 ```
 **EXPECT**: `[build] OK  (40 main / 18 test sources)`, then both strategy blocks and the summary table
 (`expected-output/3-candidates-benchmark.txt`, about 3 seconds):
-* `pessimistic`: race 0, burst double bookings 0, **lock timeouts ≈ 87–92 per round**, max wait ≈ 50.3 ms,
-  max attempts 2, **amplification ≈ 1.67–1.71x**, cold max ≈ 65 ms; two ✘ checks; `REJECT - 2 check(s) failed`.
+* `pessimistic`: race 0, burst double bookings 0, **lock timeouts ≈ 80–92 per round**, max wait ≈ 50.3 ms,
+  max attempts 2, **amplification ≈ 1.64–1.71x**, cold max ≈ 65 ms; two ✘ checks; `REJECT - 2 check(s) failed`.
 * `fenced`: race 0, burst double bookings 0, lock timeouts 0, max wait ≈ 15–40 ms, max attempts 1,
   amplification 1.00x, cold max ≈ 5–7 ms; all ✔; `ACCEPT`.
 * `RESULT: accepted=[fenced]  rejected=[pessimistic]`
@@ -306,7 +294,7 @@ requests must stay at or under 1.10x."
 **SAY**:
 * "Both candidates are correct: zero double bookings in the overlap race and in all three burst rounds,
   on three pods. Correctness alone doesn't decide between the two candidates."
-* "`pessimistic` fails two checks. About 90 requests per burst round wait the full 50 milliseconds on the
+* "`pessimistic` fails two checks. Between 80 and 90 requests per burst round wait the full 50 milliseconds on the
   resource row and get aborted by `lock_timeout`, about 0.7 aborts per request against an affordable 0.10.
   Every abort becomes a retry, so retry amplification is about 1.7x against the 1.10x budget. Even the
   cold slots that nobody competes for take about 65 milliseconds, because every booking on Centre Court
@@ -321,12 +309,12 @@ requests must stay at or under 1.10x."
 ./scripts/test.sh burst timeout
 ```
 **EXPECT**: `RESULT: 6 passed, 1 failed`: `BurstContentionTest.lockWaitAndRetryBudget` fails on retry
-amplification ≈ 1.57x (`expected-output/3b-pessimistic-burst-timeout-tests.txt`).
+amplification ≈ 1.5–1.6x (`expected-output/3b-pessimistic-burst-timeout-tests.txt`).
 
 **SAY**: "The existing `BurstContentionTest` agrees: with `pessimistic` configured,
 `lockWaitAndRetryBudget` fails on retry amplification. Two independent measurements rule out `pessimistic`."
 
-### 4.3 ✍️ T5: finalize the winner
+### 4.3 ✍️ T4: finalize the winner
 **DO**: In `config/reservation.properties`, change `reservation.locking.strategy=pessimistic` to:
 ```properties
 reservation.locking.strategy=fenced
@@ -361,9 +349,9 @@ side effects. And the benchmark on the configured strategy, `fenced`, accepts ev
 **DO**: Right-click the project root → *Local History ▸ Show History*. Then open `reports/`.
 
 **SAY**: "From the reference patch I reused `LockingStrategy`, `PessimisticResourceLock`, `SlotBucketFence`,
-`SlotBucket`, `RetryPolicy`, the new `ReservationService` and the `LockingBenchmark` harness. I wrote the
-predicate fix in `SlotAvailabilityChecker`, the strategy wiring in `ServiceNode`, the timeout and retry
-settings in `reservation.properties`, and the constraint assertions in `LockingBenchmark.checkConstraints`.
+`SlotBucket`, `RetryPolicy`, the new `ReservationService` and the `LockingBenchmark` harness with its
+constraint assertions. I wrote the predicate fix in `SlotAvailabilityChecker`, the strategy wiring in
+`ServiceNode`, and the timeout and retry settings in `reservation.properties`.
 The `reports/` folder holds the baseline, both candidates side by side, and the final verification."
 
 ---
